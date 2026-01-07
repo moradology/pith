@@ -389,7 +389,7 @@ fn extract_comment(node: tree_sitter::Node, content: &str) -> Option<String> {
 
 /// Go visibility is determined by capitalization of the first letter.
 fn go_visibility(name: &str) -> Visibility {
-    if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+    if name.chars().next().is_some_and(|c| c.is_uppercase()) {
         Visibility::Public
     } else {
         Visibility::Private

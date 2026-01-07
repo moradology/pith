@@ -716,7 +716,7 @@ fn file_node_to_json(
         selected: if is_selected { Some(true) } else { None },
         has_codemap: if has_map { Some(true) } else { None },
         children: node
-            .children
+            .children()
             .iter()
             .map(|c| file_node_to_json(c, selected, has_codemap))
             .collect(),
@@ -988,12 +988,10 @@ fn calculate_summary(
     selected_files: &[SelectedFile],
 ) -> TokenSummary {
     // Calculate tree tokens (by rendering it)
-    let tree_tokens = tree
-        .map(|t| {
-            let rendered = render_tree(t, &RenderOptions::with_metadata());
-            count_tokens(&rendered)
-        })
-        .unwrap_or(0);
+    let tree_tokens = tree.map_or(0, |t| {
+        let rendered = render_tree(t, &RenderOptions::with_metadata());
+        count_tokens(&rendered)
+    });
 
     // Sum codemap tokens
     let codemap_tokens: usize = codemaps.iter().map(|c| c.token_count).sum();

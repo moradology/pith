@@ -146,7 +146,7 @@ impl Location {
 }
 
 /// A field in a struct or class.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
     pub ty: String,
@@ -154,8 +154,9 @@ pub struct Field {
 }
 
 /// A declaration extracted from source code.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Declaration {
+    /// A function or method declaration (Rust fn, Python def, Go func, JS/TS function).
     Function {
         name: String,
         signature: String,
@@ -164,6 +165,7 @@ pub enum Declaration {
         is_async: bool,
         doc: Option<String>,
     },
+    /// A struct declaration with fields and optional methods (Rust struct, Go struct).
     Struct {
         name: String,
         fields: Vec<Field>,
@@ -172,6 +174,7 @@ pub enum Declaration {
         methods: Vec<Declaration>,
         doc: Option<String>,
     },
+    /// An enum declaration with variants (Rust enum).
     Enum {
         name: String,
         variants: Vec<String>,
@@ -179,30 +182,35 @@ pub enum Declaration {
         location: Location,
         doc: Option<String>,
     },
+    /// A trait declaration with method signatures (Rust trait).
     Trait {
         name: String,
         methods: Vec<String>,
         location: Location,
         doc: Option<String>,
     },
+    /// A type alias (Rust type, Go type, TS type).
     TypeAlias {
         name: String,
         target: String,
         visibility: Visibility,
         location: Location,
     },
+    /// A constant declaration (Rust const, Go const).
     Const {
         name: String,
         ty: String,
         visibility: Visibility,
         location: Location,
     },
+    /// An interface declaration (Go interface, TS interface).
     Interface {
         name: String,
         members: Vec<String>,
         location: Location,
         doc: Option<String>,
     },
+    /// A class declaration with members (Python class, JS/TS class).
     Class {
         name: String,
         members: Vec<Declaration>,
@@ -262,7 +270,7 @@ impl Declaration {
 }
 
 /// An import statement.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Import {
     /// Module path (e.g., "std::collections" or "react").
     pub source: String,

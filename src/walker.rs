@@ -155,7 +155,7 @@ pub fn walk_with_options(
             Ok(entry) => {
                 let path = entry.path().to_path_buf();
                 let depth = entry.depth();
-                let is_file = entry.file_type().map(|ft| ft.is_file()).unwrap_or(false);
+                let is_file = entry.file_type().is_some_and(|ft| ft.is_file());
 
                 let size = if is_file {
                     entry.metadata().ok().map(|m| m.len())
@@ -174,7 +174,7 @@ pub fn walk_with_options(
                 // Convert ignore errors to our error type
                 match e {
                     ignore::Error::Io(io_err) => {
-                        let path = PathBuf::new(); // Path not available from ignore::Error
+                        let path = PathBuf::from("<walk error>");
                         if io_err.kind() == std::io::ErrorKind::PermissionDenied {
                             Some(Err(WalkError::PermissionDenied { path }))
                         } else {
@@ -225,8 +225,7 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
 
     let name = root
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        .map_or_else(|| root.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned());
 
     if metadata.is_file() {
         let extension = root
@@ -450,11 +449,11 @@ mod tests {
         let tree = build_tree(dir.path()).unwrap();
 
         // Directory should come first
-        assert!(tree.children[0].is_directory());
-        assert_eq!(tree.children[0].name, "a_dir");
+        assert!(tree.children()[0].is_directory());
+        assert_eq!(tree.children()[0].name, "a_dir");
         // Then files alphabetically
-        assert_eq!(tree.children[1].name, "a.rs");
-        assert_eq!(tree.children[2].name, "z.rs");
+        assert_eq!(tree.children()[1].name, "a.rs");
+        assert_eq!(tree.children()[2].name, "z.rs");
     }
 
     #[test]

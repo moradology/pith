@@ -42,7 +42,7 @@ pub struct FileNode {
     /// Type of node (file or directory).
     pub kind: NodeKind,
     /// Child nodes (empty for files).
-    pub children: Vec<FileNode>,
+    children: Vec<FileNode>,
 }
 
 impl FileNode {
@@ -89,6 +89,11 @@ impl FileNode {
     /// Add a child node. Only valid for directories.
     pub fn add_child(&mut self, child: FileNode) {
         self.children.push(child);
+    }
+
+    /// Get child nodes.
+    pub fn children(&self) -> &[FileNode] {
+        &self.children
     }
 
     /// Sort children: directories first, then alphabetically.

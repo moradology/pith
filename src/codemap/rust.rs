@@ -376,10 +376,7 @@ fn extract_impl(
     let impl_type = find_child_by_kind(node, "type_identifier")
         .map(|n| node_text(n, content));
 
-    let impl_type = match impl_type {
-        Some(t) => t,
-        None => return,
-    };
+    let Some(impl_type) = impl_type else { return };
 
     // Extract methods from the impl block
     let mut methods = Vec::new();

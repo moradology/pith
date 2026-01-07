@@ -428,7 +428,7 @@ fn tree_to_json(node: &pith::tree::FileNode) -> JsonTreeNode {
         extension,
         size,
         lines,
-        children: node.children.iter().map(tree_to_json).collect(),
+        children: node.children().iter().map(tree_to_json).collect(),
     }
 }
 

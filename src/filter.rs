@@ -213,9 +213,8 @@ pub fn is_minified(content: &[u8]) -> bool {
 pub fn is_generated(content: &[u8]) -> bool {
     // Only check first 2KB for efficiency
     let check_len = content.len().min(2048);
-    let text = match std::str::from_utf8(&content[..check_len]) {
-        Ok(t) => t,
-        Err(_) => return false, // Can't check non-UTF8
+    let Ok(text) = std::str::from_utf8(&content[..check_len]) else {
+        return false; // Can't check non-UTF8
     };
 
     GENERATED_MARKERS
@@ -272,15 +271,14 @@ pub fn should_process(path: &Path, content: Option<&[u8]>) -> FilterResult {
 
     // Check for minified JS/CSS by filename pattern
     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-        if stem.ends_with(".min") {
+        if stem.to_lowercase().ends_with(".min") {
             return FilterResult::Reject(RejectReason::MinifiedContent);
         }
     }
 
     // Layer 2: Allowlist (language detection)
-    let language = match detect_language(path) {
-        Some(lang) => lang,
-        None => return FilterResult::Reject(RejectReason::UnknownExtension),
+    let Some(language) = detect_language(path) else {
+        return FilterResult::Reject(RejectReason::UnknownExtension);
     };
 
     // Layer 3: Content heuristics (if content provided)

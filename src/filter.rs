@@ -1,0 +1,465 @@
+//! File filtering using layered blocklist/allowlist/heuristics.
+//!
+//! Determines which files should be processed for codemap extraction.
+
+use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+/// Errors that can occur during file filtering.
+#[derive(Debug, Error)]
+pub enum FilterError {
+    #[error("failed to read file for heuristics: {path}")]
+    ReadFailed { path: PathBuf },
+}
+
+/// Supported programming languages for codemap extraction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Language {
+    Rust,
+    TypeScript,
+    Tsx,
+    JavaScript,
+    Jsx,
+    Python,
+    Go,
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Language::Rust => write!(f, "rust"),
+            Language::TypeScript => write!(f, "typescript"),
+            Language::Tsx => write!(f, "tsx"),
+            Language::JavaScript => write!(f, "javascript"),
+            Language::Jsx => write!(f, "jsx"),
+            Language::Python => write!(f, "python"),
+            Language::Go => write!(f, "go"),
+        }
+    }
+}
+
+impl std::str::FromStr for Language {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "rust" | "rs" => Ok(Language::Rust),
+            "typescript" | "ts" => Ok(Language::TypeScript),
+            "tsx" => Ok(Language::Tsx),
+            "javascript" | "js" => Ok(Language::JavaScript),
+            "jsx" => Ok(Language::Jsx),
+            "python" | "py" => Ok(Language::Python),
+            "go" => Ok(Language::Go),
+            _ => Err(format!("unknown language: {}", s)),
+        }
+    }
+}
+
+impl Language {
+    /// Get all supported languages.
+    pub fn all() -> &'static [Language] {
+        &[
+            Language::Rust,
+            Language::TypeScript,
+            Language::Tsx,
+            Language::JavaScript,
+            Language::Jsx,
+            Language::Python,
+            Language::Go,
+        ]
+    }
+
+    /// Get file extensions for this language.
+    pub fn extensions(&self) -> &'static [&'static str] {
+        match self {
+            Language::Rust => &["rs"],
+            Language::TypeScript => &["ts"],
+            Language::Tsx => &["tsx"],
+            Language::JavaScript => &["js", "mjs", "cjs"],
+            Language::Jsx => &["jsx"],
+            Language::Python => &["py", "pyi"],
+            Language::Go => &["go"],
+        }
+    }
+}
+
+/// Result of filtering a file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FilterResult {
+    /// File accepted for processing with detected language.
+    Accept(Language),
+    /// File rejected with reason.
+    Reject(RejectReason),
+}
+
+/// Reason why a file was rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RejectReason {
+    /// Extension is in the blocklist (binary, lock file, etc.)
+    BlocklistedExtension,
+    /// Extension not in the allowlist of supported languages
+    UnknownExtension,
+    /// No extension on file
+    NoExtension,
+    /// File contains binary content (null bytes)
+    BinaryContent,
+    /// File appears to be minified (very long lines)
+    MinifiedContent,
+    /// File appears to be generated (contains markers)
+    GeneratedFile,
+}
+
+impl std::fmt::Display for RejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RejectReason::BlocklistedExtension => write!(f, "blocklisted extension"),
+            RejectReason::UnknownExtension => write!(f, "unknown extension"),
+            RejectReason::NoExtension => write!(f, "no extension"),
+            RejectReason::BinaryContent => write!(f, "binary content"),
+            RejectReason::MinifiedContent => write!(f, "minified content"),
+            RejectReason::GeneratedFile => write!(f, "generated file"),
+        }
+    }
+}
+
+/// Extensions that are always rejected (binary, lock files, etc.)
+const BLOCKLISTED_EXTENSIONS: &[&str] = &[
+    // Images
+    "png", "jpg", "jpeg", "gif", "webp", "ico", "svg", "bmp", "tiff",
+    // Binary
+    "wasm", "so", "dll", "dylib", "exe", "bin", "o", "a", "lib",
+    // Archives
+    "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz",
+    // Documents
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    // Media
+    "mp3", "mp4", "wav", "avi", "mov", "mkv", "flac", "ogg",
+    // Fonts
+    "ttf", "otf", "woff", "woff2", "eot",
+    // Lock files
+    "lock",
+    // Source maps
+    "map",
+    // Database
+    "db", "sqlite", "sqlite3",
+];
+
+/// File names that are always rejected.
+const BLOCKLISTED_FILENAMES: &[&str] = &[
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "poetry.lock",
+    "Gemfile.lock",
+    "composer.lock",
+];
+
+/// Markers indicating a generated file.
+const GENERATED_MARKERS: &[&str] = &[
+    "// Code generated",
+    "// DO NOT EDIT",
+    "# Generated by",
+    "/* Auto-generated */",
+    "// This file is auto-generated",
+    "@generated",
+    "// generated from",
+    "// Autogenerated",
+    "# Autogenerated",
+    "# DO NOT EDIT",
+    "<!-- Generated -->",
+    "// THIS FILE IS GENERATED",
+];
+
+/// Maximum line length before considering a file minified.
+const MAX_LINE_LENGTH: usize = 500;
+
+/// Check if an extension is blocklisted.
+pub fn is_blocklisted(extension: &str) -> bool {
+    let ext_lower = extension.to_lowercase();
+    BLOCKLISTED_EXTENSIONS.contains(&ext_lower.as_str())
+}
+
+/// Check if a filename is blocklisted.
+pub fn is_blocklisted_filename(filename: &str) -> bool {
+    BLOCKLISTED_FILENAMES.contains(&filename)
+}
+
+/// Detect language from file path based on extension.
+pub fn detect_language(path: &Path) -> Option<Language> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+
+    for lang in Language::all() {
+        if lang.extensions().contains(&ext.as_str()) {
+            return Some(*lang);
+        }
+    }
+    None
+}
+
+/// Check if content contains binary data (null bytes).
+pub fn is_binary(content: &[u8]) -> bool {
+    content.iter().any(|&b| b == 0)
+}
+
+/// Check if content appears to be minified (very long lines).
+pub fn is_minified(content: &[u8]) -> bool {
+    content
+        .split(|&b| b == b'\n')
+        .any(|line| line.len() > MAX_LINE_LENGTH)
+}
+
+/// Check if content appears to be generated.
+pub fn is_generated(content: &[u8]) -> bool {
+    // Only check first 2KB for efficiency
+    let check_len = content.len().min(2048);
+    let text = match std::str::from_utf8(&content[..check_len]) {
+        Ok(t) => t,
+        Err(_) => return false, // Can't check non-UTF8
+    };
+
+    GENERATED_MARKERS
+        .iter()
+        .any(|marker| text.contains(marker))
+}
+
+/// Determine if a file should be processed for codemap extraction.
+///
+/// Uses a layered filtering approach:
+/// 1. Extension blocklist (instant skip)
+/// 2. Extension allowlist (supported languages)
+/// 3. Content heuristics (binary, minified, generated)
+///
+/// # Arguments
+///
+/// * `path` - File path to check
+/// * `content` - Optional first 1-2KB of file content for heuristics.
+///               Pass `None` to skip heuristic checks.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use pith::filter::{should_process, FilterResult, Language};
+///
+/// // Check by extension only
+/// let result = should_process(Path::new("src/main.rs"), None);
+/// assert!(matches!(result, FilterResult::Accept(Language::Rust)));
+///
+/// // Check with content heuristics
+/// let content = b"fn main() {}";
+/// let result = should_process(Path::new("src/main.rs"), Some(content));
+/// assert!(matches!(result, FilterResult::Accept(Language::Rust)));
+/// ```
+pub fn should_process(path: &Path, content: Option<&[u8]>) -> FilterResult {
+    // Check filename blocklist first
+    if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+        if is_blocklisted_filename(filename) {
+            return FilterResult::Reject(RejectReason::BlocklistedExtension);
+        }
+    }
+
+    // Get extension
+    let ext = match path.extension().and_then(|e| e.to_str()) {
+        Some(e) => e.to_lowercase(),
+        None => return FilterResult::Reject(RejectReason::NoExtension),
+    };
+
+    // Layer 1: Blocklist
+    if is_blocklisted(&ext) {
+        return FilterResult::Reject(RejectReason::BlocklistedExtension);
+    }
+
+    // Check for minified JS/CSS by filename pattern
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        if stem.ends_with(".min") {
+            return FilterResult::Reject(RejectReason::MinifiedContent);
+        }
+    }
+
+    // Layer 2: Allowlist (language detection)
+    let language = match detect_language(path) {
+        Some(lang) => lang,
+        None => return FilterResult::Reject(RejectReason::UnknownExtension),
+    };
+
+    // Layer 3: Content heuristics (if content provided)
+    if let Some(content) = content {
+        if is_binary(content) {
+            return FilterResult::Reject(RejectReason::BinaryContent);
+        }
+
+        if is_minified(content) {
+            return FilterResult::Reject(RejectReason::MinifiedContent);
+        }
+
+        if is_generated(content) {
+            return FilterResult::Reject(RejectReason::GeneratedFile);
+        }
+    }
+
+    FilterResult::Accept(language)
+}
+
+/// Check if a path passes basic extension filtering (no content check).
+///
+/// Useful for quick filtering before reading file content.
+pub fn passes_extension_filter(path: &Path) -> Option<Language> {
+    match should_process(path, None) {
+        FilterResult::Accept(lang) => Some(lang),
+        FilterResult::Reject(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rust_file() {
+        let result = should_process(Path::new("src/main.rs"), None);
+        assert_eq!(result, FilterResult::Accept(Language::Rust));
+    }
+
+    #[test]
+    fn test_typescript_file() {
+        let result = should_process(Path::new("src/index.ts"), None);
+        assert_eq!(result, FilterResult::Accept(Language::TypeScript));
+    }
+
+    #[test]
+    fn test_tsx_file() {
+        let result = should_process(Path::new("components/App.tsx"), None);
+        assert_eq!(result, FilterResult::Accept(Language::Tsx));
+    }
+
+    #[test]
+    fn test_javascript_file() {
+        let result = should_process(Path::new("lib/utils.js"), None);
+        assert_eq!(result, FilterResult::Accept(Language::JavaScript));
+
+        let result = should_process(Path::new("lib/utils.mjs"), None);
+        assert_eq!(result, FilterResult::Accept(Language::JavaScript));
+    }
+
+    #[test]
+    fn test_python_file() {
+        let result = should_process(Path::new("script.py"), None);
+        assert_eq!(result, FilterResult::Accept(Language::Python));
+
+        let result = should_process(Path::new("types.pyi"), None);
+        assert_eq!(result, FilterResult::Accept(Language::Python));
+    }
+
+    #[test]
+    fn test_go_file() {
+        let result = should_process(Path::new("main.go"), None);
+        assert_eq!(result, FilterResult::Accept(Language::Go));
+    }
+
+    #[test]
+    fn test_blocklisted_extension() {
+        let result = should_process(Path::new("image.png"), None);
+        assert_eq!(
+            result,
+            FilterResult::Reject(RejectReason::BlocklistedExtension)
+        );
+
+        let result = should_process(Path::new("archive.zip"), None);
+        assert_eq!(
+            result,
+            FilterResult::Reject(RejectReason::BlocklistedExtension)
+        );
+    }
+
+    #[test]
+    fn test_blocklisted_filename() {
+        let result = should_process(Path::new("package-lock.json"), None);
+        assert_eq!(
+            result,
+            FilterResult::Reject(RejectReason::BlocklistedExtension)
+        );
+
+        let result = should_process(Path::new("Cargo.lock"), None);
+        assert_eq!(
+            result,
+            FilterResult::Reject(RejectReason::BlocklistedExtension)
+        );
+    }
+
+    #[test]
+    fn test_unknown_extension() {
+        let result = should_process(Path::new("README.md"), None);
+        assert_eq!(result, FilterResult::Reject(RejectReason::UnknownExtension));
+
+        let result = should_process(Path::new("config.yaml"), None);
+        assert_eq!(result, FilterResult::Reject(RejectReason::UnknownExtension));
+    }
+
+    #[test]
+    fn test_no_extension() {
+        let result = should_process(Path::new("Makefile"), None);
+        assert_eq!(result, FilterResult::Reject(RejectReason::NoExtension));
+    }
+
+    #[test]
+    fn test_minified_filename() {
+        let result = should_process(Path::new("bundle.min.js"), None);
+        assert_eq!(result, FilterResult::Reject(RejectReason::MinifiedContent));
+    }
+
+    #[test]
+    fn test_binary_content() {
+        let content = b"fn main() {\x00}";
+        let result = should_process(Path::new("test.rs"), Some(content));
+        assert_eq!(result, FilterResult::Reject(RejectReason::BinaryContent));
+    }
+
+    #[test]
+    fn test_minified_content() {
+        // Create a line longer than MAX_LINE_LENGTH
+        let long_line = "x".repeat(MAX_LINE_LENGTH + 100);
+        let content = format!("var x = {{\n{}\n}}", long_line);
+        let result = should_process(Path::new("bundle.js"), Some(content.as_bytes()));
+        assert_eq!(result, FilterResult::Reject(RejectReason::MinifiedContent));
+    }
+
+    #[test]
+    fn test_generated_content() {
+        let content = b"// Code generated by protoc. DO NOT EDIT.\npackage main";
+        let result = should_process(Path::new("proto.go"), Some(content));
+        assert_eq!(result, FilterResult::Reject(RejectReason::GeneratedFile));
+    }
+
+    #[test]
+    fn test_valid_content() {
+        let content = b"fn main() {\n    println!(\"Hello\");\n}";
+        let result = should_process(Path::new("main.rs"), Some(content));
+        assert_eq!(result, FilterResult::Accept(Language::Rust));
+    }
+
+    #[test]
+    fn test_language_extensions() {
+        assert_eq!(Language::Rust.extensions(), &["rs"]);
+        assert_eq!(Language::JavaScript.extensions(), &["js", "mjs", "cjs"]);
+        assert_eq!(Language::Python.extensions(), &["py", "pyi"]);
+    }
+
+    #[test]
+    fn test_language_from_str() {
+        assert_eq!("rust".parse::<Language>().unwrap(), Language::Rust);
+        assert_eq!("rs".parse::<Language>().unwrap(), Language::Rust);
+        assert_eq!("typescript".parse::<Language>().unwrap(), Language::TypeScript);
+        assert_eq!("ts".parse::<Language>().unwrap(), Language::TypeScript);
+        assert!("invalid".parse::<Language>().is_err());
+    }
+
+    #[test]
+    fn test_passes_extension_filter() {
+        assert_eq!(
+            passes_extension_filter(Path::new("main.rs")),
+            Some(Language::Rust)
+        );
+        assert_eq!(passes_extension_filter(Path::new("image.png")), None);
+    }
+}

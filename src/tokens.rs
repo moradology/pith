@@ -63,7 +63,7 @@ fn fallback_count(text: &str) -> usize {
     // Rough approximation based on average English text
     // Code tends to have ~3.5 chars/token, prose ~4.2
     // Using 4 as middle ground
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 /// Count tokens in text using the default encoding (cl100k_base).

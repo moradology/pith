@@ -2,7 +2,7 @@
 
 use tree_sitter::Parser;
 
-use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility};
+use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text};
 
 /// Extract imports and declarations from Go source code.
 pub fn extract(
@@ -302,9 +302,8 @@ fn extract_type_spec(
     // Type alias
     let full_text = node_text(node, content);
     let target = full_text
-        .splitn(2, &name)
-        .nth(1)
-        .map(|s| s.trim().to_string())
+        .split_once(&name)
+        .map(|(_, s)| s.trim().to_string())
         .unwrap_or_default();
 
     let location = Location::new(
@@ -401,15 +400,6 @@ fn go_visibility(name: &str) -> Visibility {
     } else {
         Visibility::Private
     }
-}
-
-fn find_child_by_kind<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
-    node.children(&mut node.walk())
-        .find(|c| c.kind() == kind)
-}
-
-fn node_text(node: tree_sitter::Node, content: &str) -> String {
-    content[node.byte_range()].to_string()
 }
 
 #[cfg(test)]

@@ -378,7 +378,7 @@ fn run_tree(
     };
 
     let tree = build_tree_with_options(&path, walk_opts)
-        .map_err(|e| PithError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
 
     if json {
         // Use serde to serialize the tree
@@ -521,7 +521,7 @@ fn run_context(
 
     // Build the file tree
     let tree = build_tree_with_options(&path, WalkOptions::default())
-        .map_err(|e| PithError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
 
     let extract_opts = ExtractOptions {
         include_docs,

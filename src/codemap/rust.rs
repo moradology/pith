@@ -2,7 +2,7 @@
 
 use tree_sitter::{Parser, Node};
 
-use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility};
+use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text};
 
 /// Extract imports and declarations from Rust source code.
 pub fn extract(
@@ -469,15 +469,6 @@ fn extract_doc_comment(node: Node, content: &str) -> Option<String> {
         doc_lines.reverse();
         Some(doc_lines.join("\n"))
     }
-}
-
-fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
-    node.children(&mut node.walk())
-        .find(|c| c.kind() == kind)
-}
-
-fn node_text(node: Node, content: &str) -> String {
-    content[node.byte_range()].to_string()
 }
 
 #[cfg(test)]

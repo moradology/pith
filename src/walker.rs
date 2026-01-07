@@ -302,7 +302,7 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
     // Get the root and sort
     let mut result = node_map.remove(&root.to_path_buf()).ok_or_else(|| WalkError::Io {
         path: root.to_path_buf(),
-        source: std::io::Error::new(std::io::ErrorKind::Other, "failed to build tree"),
+        source: std::io::Error::other("failed to build tree"),
     })?;
 
     result.sort_children();

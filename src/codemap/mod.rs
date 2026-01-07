@@ -11,6 +11,19 @@ mod go;
 
 use std::path::{Path, PathBuf};
 
+use tree_sitter::Node;
+
+/// Find a child node by kind.
+pub(crate) fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    node.children(&mut node.walk())
+        .find(|c| c.kind() == kind)
+}
+
+/// Extract node text from content.
+pub(crate) fn node_text(node: Node, content: &str) -> String {
+    content[node.byte_range()].to_string()
+}
+
 use thiserror::Error;
 
 use crate::filter::Language;

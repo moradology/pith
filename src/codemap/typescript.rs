@@ -3,7 +3,7 @@
 use tree_sitter::Parser;
 
 use crate::filter::Language;
-use super::{Declaration, ExtractOptions, Import, Location, Visibility};
+use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text};
 
 /// Extract imports and declarations from TypeScript/TSX source code.
 pub fn extract(
@@ -442,15 +442,6 @@ fn extract_jsdoc(node: tree_sitter::Node, content: &str) -> Option<String> {
     }
 
     None
-}
-
-fn find_child_by_kind<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
-    node.children(&mut node.walk())
-        .find(|c| c.kind() == kind)
-}
-
-fn node_text(node: tree_sitter::Node, content: &str) -> String {
-    content[node.byte_range()].to_string()
 }
 
 #[cfg(test)]

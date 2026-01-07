@@ -79,7 +79,7 @@ impl Pith {
     pub fn build(self) -> Result<PithResult, PithError> {
         // Build tree
         let tree = build_tree(&self.root)
-            .map_err(|e| PithError::Walk(e))?;
+            .map_err(PithError::Walk)?;
 
         // Extract codemaps in parallel
         let extract_options = ExtractOptions {

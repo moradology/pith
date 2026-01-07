@@ -2,7 +2,7 @@
 
 use tree_sitter::Parser;
 
-use super::{Declaration, ExtractOptions, Import, Location, Visibility};
+use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text};
 
 /// Extract imports and declarations from Python source code.
 pub fn extract(
@@ -241,7 +241,8 @@ fn extract_docstring(node: tree_sitter::Node, content: &str) -> Option<String> {
     // Look for docstring as first statement in block
     let block = find_child_by_kind(node, "block")?;
 
-    for child in block.children(&mut block.walk()) {
+    // Only check first statement
+    if let Some(child) = block.children(&mut block.walk()).next() {
         if child.kind() == "expression_statement" {
             if let Some(string) = find_child_by_kind(child, "string") {
                 let text = node_text(string, content);
@@ -259,19 +260,9 @@ fn extract_docstring(node: tree_sitter::Node, content: &str) -> Option<String> {
                 return Some(inner.to_string());
             }
         }
-        break; // Only check first statement
     }
 
     None
-}
-
-fn find_child_by_kind<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
-    node.children(&mut node.walk())
-        .find(|c| c.kind() == kind)
-}
-
-fn node_text(node: tree_sitter::Node, content: &str) -> String {
-    content[node.byte_range()].to_string()
 }
 
 #[cfg(test)]

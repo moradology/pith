@@ -199,7 +199,7 @@ pub fn detect_language(path: &Path) -> Option<Language> {
 
 /// Check if content contains binary data (null bytes).
 pub fn is_binary(content: &[u8]) -> bool {
-    content.iter().any(|&b| b == 0)
+    content.contains(&0)
 }
 
 /// Check if content appears to be minified (very long lines).
@@ -234,7 +234,7 @@ pub fn is_generated(content: &[u8]) -> bool {
 ///
 /// * `path` - File path to check
 /// * `content` - Optional first 1-2KB of file content for heuristics.
-///               Pass `None` to skip heuristic checks.
+///   Pass `None` to skip heuristic checks.
 ///
 /// # Examples
 ///

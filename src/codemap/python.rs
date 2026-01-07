@@ -1,36 +1,30 @@
 //! Python codemap extraction using tree-sitter.
 
-use tree_sitter::Parser;
-
-use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text};
+use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text, with_python_parser};
 
 /// Extract imports and declarations from Python source code.
 pub fn extract(
     content: &str,
     options: &ExtractOptions,
 ) -> Result<(Vec<Import>, Vec<Declaration>), String> {
-    let mut parser = Parser::new();
-    let language = tree_sitter_python::LANGUAGE;
-    parser
-        .set_language(&language.into())
-        .map_err(|e| format!("failed to set language: {}", e))?;
+    with_python_parser(|parser| {
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| "failed to parse".to_string())?;
 
-    let tree = parser
-        .parse(content, None)
-        .ok_or_else(|| "failed to parse".to_string())?;
+        let mut imports = Vec::new();
+        let mut declarations = Vec::new();
 
-    let mut imports = Vec::new();
-    let mut declarations = Vec::new();
+        extract_from_node(
+            tree.root_node(),
+            content,
+            options,
+            &mut imports,
+            &mut declarations,
+        );
 
-    extract_from_node(
-        tree.root_node(),
-        content,
-        options,
-        &mut imports,
-        &mut declarations,
-    );
-
-    Ok((imports, declarations))
+        Ok((imports, declarations))
+    })
 }
 
 fn extract_from_node(

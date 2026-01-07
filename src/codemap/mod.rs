@@ -9,9 +9,83 @@ mod javascript;
 mod python;
 mod go;
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
-use tree_sitter::Node;
+use tree_sitter::{Node, Parser};
+
+// Thread-local parser caching to avoid re-initialization overhead
+thread_local! {
+    static RUST_PARSER: RefCell<Parser> = RefCell::new({
+        let mut p = Parser::new();
+        p.set_language(&tree_sitter_rust::LANGUAGE.into()).expect("rust language");
+        p
+    });
+
+    static TS_PARSER: RefCell<Parser> = RefCell::new({
+        let mut p = Parser::new();
+        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()).expect("typescript language");
+        p
+    });
+
+    static TSX_PARSER: RefCell<Parser> = RefCell::new({
+        let mut p = Parser::new();
+        p.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into()).expect("tsx language");
+        p
+    });
+
+    static PYTHON_PARSER: RefCell<Parser> = RefCell::new({
+        let mut p = Parser::new();
+        p.set_language(&tree_sitter_python::LANGUAGE.into()).expect("python language");
+        p
+    });
+
+    static GO_PARSER: RefCell<Parser> = RefCell::new({
+        let mut p = Parser::new();
+        p.set_language(&tree_sitter_go::LANGUAGE.into()).expect("go language");
+        p
+    });
+}
+
+/// Execute a function with a cached Rust parser.
+pub(crate) fn with_rust_parser<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    RUST_PARSER.with(|p| f(&mut p.borrow_mut()))
+}
+
+/// Execute a function with a cached TypeScript parser.
+pub(crate) fn with_ts_parser<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    TS_PARSER.with(|p| f(&mut p.borrow_mut()))
+}
+
+/// Execute a function with a cached TSX parser.
+pub(crate) fn with_tsx_parser<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    TSX_PARSER.with(|p| f(&mut p.borrow_mut()))
+}
+
+/// Execute a function with a cached Python parser.
+pub(crate) fn with_python_parser<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    PYTHON_PARSER.with(|p| f(&mut p.borrow_mut()))
+}
+
+/// Execute a function with a cached Go parser.
+pub(crate) fn with_go_parser<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    GO_PARSER.with(|p| f(&mut p.borrow_mut()))
+}
 
 /// Find a child node by kind.
 pub(crate) fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
@@ -351,7 +425,8 @@ pub fn extract_codemap(
 
 /// Simple render for token counting.
 fn render_codemap_simple(codemap: &Codemap) -> String {
-    let mut output = String::new();
+    // Pre-allocate for typical codemap size
+    let mut output = String::with_capacity(1024);
 
     // Imports
     for import in &codemap.imports {

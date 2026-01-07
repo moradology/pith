@@ -150,7 +150,8 @@ fn format_output_xml(
     selected_files: &[SelectedFile],
     options: &OutputOptions,
 ) -> String {
-    let mut output = String::new();
+    // Pre-allocate for typical output size
+    let mut output = String::with_capacity(8192);
 
     // File tree section
     if options.include_tree {
@@ -218,7 +219,7 @@ fn format_output_xml(
 }
 
 fn format_codemap_xml(codemap: &Codemap, public_only: bool) -> String {
-    let mut output = String::new();
+    let mut output = String::with_capacity(2048);
 
     // File header
     output.push_str(&format!("## {}\n\n", codemap.path.display()));

@@ -106,6 +106,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytecount"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
+
+[[package]]
 name = "cc"
 version = "1.2.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -383,6 +389,7 @@ dependencies = [
 name = "pith"
 version = "0.1.0"
 dependencies = [
+ "bytecount",
  "clap",
  "clap_complete",
  "glob",

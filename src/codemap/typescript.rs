@@ -3,7 +3,7 @@
 use tree_sitter::Parser;
 
 use crate::filter::Language;
-use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text};
+use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text, with_ts_parser, with_tsx_parser};
 
 /// Extract imports and declarations from TypeScript/TSX source code.
 pub fn extract(
@@ -11,33 +11,29 @@ pub fn extract(
     language: Language,
     options: &ExtractOptions,
 ) -> Result<(Vec<Import>, Vec<Declaration>), String> {
-    let mut parser = Parser::new();
+    let extract_fn = |parser: &mut Parser| {
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| "failed to parse".to_string())?;
 
-    let ts_language = match language {
-        Language::Tsx => tree_sitter_typescript::LANGUAGE_TSX,
-        _ => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+        let mut imports = Vec::new();
+        let mut declarations = Vec::new();
+
+        extract_from_node(
+            tree.root_node(),
+            content,
+            options,
+            &mut imports,
+            &mut declarations,
+        );
+
+        Ok((imports, declarations))
     };
 
-    parser
-        .set_language(&ts_language.into())
-        .map_err(|e| format!("failed to set language: {}", e))?;
-
-    let tree = parser
-        .parse(content, None)
-        .ok_or_else(|| "failed to parse".to_string())?;
-
-    let mut imports = Vec::new();
-    let mut declarations = Vec::new();
-
-    extract_from_node(
-        tree.root_node(),
-        content,
-        options,
-        &mut imports,
-        &mut declarations,
-    );
-
-    Ok((imports, declarations))
+    match language {
+        Language::Tsx => with_tsx_parser(extract_fn),
+        _ => with_ts_parser(extract_fn),
+    }
 }
 
 fn extract_from_node(

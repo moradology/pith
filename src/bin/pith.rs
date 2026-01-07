@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use rayon::prelude::*;
 use clap_complete::{generate, Shell};
 use glob::Pattern;
 use ignore::WalkBuilder;
@@ -294,28 +295,27 @@ fn run_tokens(
             .git_ignore(true)
             .build();
 
-        for entry in walker.flatten() {
-            let entry_path = entry.path();
-            if !entry_path.is_file() {
-                continue;
-            }
+        // Collect entries for parallel processing
+        let entries: Vec<_> = walker
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .filter(|e| passes_extension_filter(e.path()).is_some())
+            .collect();
 
-            if passes_extension_filter(entry_path).is_none() {
-                continue;
-            }
-
-            let content = match fs::read_to_string(entry_path) {
-                Ok(c) => c,
-                Err(_) => continue, // Skip unreadable files
-            };
-
-            let count = count_tokens_with_encoding(&content, encoding);
-            let relative = entry_path
-                .strip_prefix(&path)
-                .unwrap_or(entry_path)
-                .to_path_buf();
-            file_tokens.insert(relative, count);
-        }
+        // Process in parallel
+        file_tokens = entries
+            .par_iter()
+            .filter_map(|entry| {
+                let entry_path = entry.path();
+                let content = fs::read_to_string(entry_path).ok()?;
+                let count = count_tokens_with_encoding(&content, encoding);
+                let relative = entry_path
+                    .strip_prefix(&path)
+                    .unwrap_or(entry_path)
+                    .to_path_buf();
+                Some((relative, count))
+            })
+            .collect();
     }
 
     let total: usize = file_tokens.values().sum();

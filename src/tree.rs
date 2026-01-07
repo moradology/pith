@@ -195,7 +195,8 @@ const SPACE: &str = "    ";
 /// assert!(output.contains("main.rs"));
 /// ```
 pub fn render_tree(root: &FileNode, options: &RenderOptions) -> String {
-    let mut output = String::new();
+    // Pre-allocate for typical tree size
+    let mut output = String::with_capacity(4096);
     render_node(&mut output, root, "", true, true, options);
     output
 }

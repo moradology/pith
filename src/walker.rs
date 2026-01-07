@@ -234,10 +234,10 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
             .and_then(|e| e.to_str())
             .map(|s| s.to_lowercase());
 
-        // Count lines for text files
-        let lines = std::fs::read_to_string(root)
+        // Count lines for text files (byte scan, no UTF-8 allocation)
+        let lines = std::fs::read(root)
             .ok()
-            .map(|content| content.lines().count());
+            .map(|bytes| bytecount::count(&bytes, b'\n'));
 
         return Ok(FileNode::file(name, root.to_path_buf(), extension, metadata.len(), lines));
     }
@@ -250,7 +250,7 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
     node_map.insert(root.to_path_buf(), root_node);
 
     // Collect entries (skipping the root itself)
-    let entries: Vec<WalkEntry> = walk_with_options(root, options.clone())
+    let mut entries: Vec<WalkEntry> = walk_with_options(root, options.clone())
         .filter_map(|r| r.ok())
         .filter(|e| e.path != root)
         .collect();
@@ -270,10 +270,10 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
                 .and_then(|e| e.to_str())
                 .map(|s| s.to_lowercase());
 
-            // Count lines for text files
-            let lines = std::fs::read_to_string(&entry.path)
+            // Count lines for text files (byte scan, no UTF-8 allocation)
+            let lines = std::fs::read(&entry.path)
                 .ok()
-                .map(|content| content.lines().count());
+                .map(|bytes| bytecount::count(&bytes, b'\n'));
 
             FileNode::file(&entry_name, &entry.path, extension, entry.size.unwrap_or(0), lines)
         } else {
@@ -285,10 +285,9 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
 
     // Build parent-child relationships
     // Process in order of depth (deepest first) so children are added before parents are moved
-    let mut sorted_entries = entries.clone();
-    sorted_entries.sort_by(|a, b| b.depth.cmp(&a.depth));
+    entries.sort_by(|a, b| b.depth.cmp(&a.depth));
 
-    for entry in &sorted_entries {
+    for entry in &entries {
         if let Some(parent_path) = entry.path.parent() {
             let parent_path = parent_path.to_path_buf();
             if let Some(child) = node_map.remove(&entry.path) {

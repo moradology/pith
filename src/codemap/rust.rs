@@ -1,36 +1,32 @@
 //! Rust codemap extraction using tree-sitter.
 
-use tree_sitter::{Parser, Node};
+use tree_sitter::Node;
 
-use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text};
+use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text, with_rust_parser};
 
 /// Extract imports and declarations from Rust source code.
 pub fn extract(
     content: &str,
     options: &ExtractOptions,
 ) -> Result<(Vec<Import>, Vec<Declaration>), String> {
-    let mut parser = Parser::new();
-    let language = tree_sitter_rust::LANGUAGE;
-    parser
-        .set_language(&language.into())
-        .map_err(|e| format!("failed to set language: {}", e))?;
+    with_rust_parser(|parser| {
+        let tree = parser
+            .parse(content, None)
+            .ok_or_else(|| "failed to parse".to_string())?;
 
-    let tree = parser
-        .parse(content, None)
-        .ok_or_else(|| "failed to parse".to_string())?;
+        let mut imports = Vec::new();
+        let mut declarations = Vec::new();
 
-    let mut imports = Vec::new();
-    let mut declarations = Vec::new();
+        extract_from_node(
+            tree.root_node(),
+            content,
+            options,
+            &mut imports,
+            &mut declarations,
+        );
 
-    extract_from_node(
-        tree.root_node(),
-        content,
-        options,
-        &mut imports,
-        &mut declarations,
-    );
-
-    Ok((imports, declarations))
+        Ok((imports, declarations))
+    })
 }
 
 fn extract_from_node(
@@ -403,7 +399,7 @@ fn extract_impl(
     for decl in declarations.iter_mut() {
         match decl {
             Declaration::Struct { name, methods: struct_methods, .. } if name == &impl_type => {
-                struct_methods.extend(methods.clone());
+                struct_methods.extend(methods);
                 return;
             }
             Declaration::Enum { name, .. } if name == &impl_type => {

@@ -1,5 +1,7 @@
 # pith
 
+![pith](pith.png)
+
 Generate structured codebase context for LLM consumption.
 
 ## What is pith?

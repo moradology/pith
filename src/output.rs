@@ -153,11 +153,12 @@ fn format_output_xml(
     // Pre-allocate for typical output size
     let mut output = String::with_capacity(8192);
 
-    // File tree section
+    // File tree section - render once and count tokens for summary
+    let mut tree_tokens = 0;
     if options.include_tree {
         if let Some(tree) = tree {
-            let selected: HashSet<PathBuf> = selected_files.iter().map(|f| f.path.clone()).collect();
-            let has_codemap: HashSet<PathBuf> = codemaps.iter().map(|c| c.path.clone()).collect();
+            let selected: HashSet<&PathBuf> = selected_files.iter().map(|f| &f.path).collect();
+            let has_codemap: HashSet<&PathBuf> = codemaps.iter().map(|c| &c.path).collect();
 
             let render_opts = RenderOptions {
                 show_size: true,
@@ -167,8 +168,11 @@ fn format_output_xml(
                 has_codemap,
             };
 
+            let rendered_tree = render_tree(tree, &render_opts);
+            tree_tokens = count_tokens(&rendered_tree);
+
             output.push_str("<file_map>\n");
-            output.push_str(&render_tree(tree, &render_opts));
+            output.push_str(&rendered_tree);
             if !selected_files.is_empty() || !codemaps.is_empty() {
                 output.push_str("\nLegend: * = selected, + = has codemap\n");
             }
@@ -209,7 +213,7 @@ fn format_output_xml(
 
     // Token summary section
     if options.include_summary {
-        let summary = calculate_summary(tree, codemaps, selected_files);
+        let summary = calculate_summary(tree_tokens, codemaps, selected_files);
         output.push_str("<token_summary>\n");
         output.push_str(&format_summary_xml(&summary));
         output.push_str("</token_summary>\n");
@@ -631,8 +635,8 @@ fn format_output_json(
     selected_files: &[SelectedFile],
     options: &OutputOptions,
 ) -> String {
-    let selected_set: HashSet<PathBuf> = selected_files.iter().map(|f| f.path.clone()).collect();
-    let codemap_set: HashSet<PathBuf> = codemaps.iter().map(|c| c.path.clone()).collect();
+    let selected_set: HashSet<&PathBuf> = selected_files.iter().map(|f| &f.path).collect();
+    let codemap_set: HashSet<&PathBuf> = codemaps.iter().map(|c| &c.path).collect();
 
     let json_tree = if options.include_tree {
         tree.map(|t| file_node_to_json(t, &selected_set, &codemap_set))
@@ -661,7 +665,12 @@ fn format_output_json(
     };
 
     let json_summary = if options.include_summary {
-        let summary = calculate_summary(tree, codemaps, selected_files);
+        // Calculate tree tokens once for summary
+        let tree_tokens = tree.map_or(0, |t| {
+            let rendered = render_tree(t, &RenderOptions::with_metadata());
+            count_tokens(&rendered)
+        });
+        let summary = calculate_summary(tree_tokens, codemaps, selected_files);
         Some(JsonSummary {
             total_tokens: summary.total,
             tree_tokens: summary.tree_tokens,
@@ -689,8 +698,8 @@ fn format_output_json(
 
 fn file_node_to_json(
     node: &FileNode,
-    selected: &HashSet<PathBuf>,
-    has_codemap: &HashSet<PathBuf>,
+    selected: &HashSet<&PathBuf>,
+    has_codemap: &HashSet<&PathBuf>,
 ) -> JsonTree {
     let (kind, extension, size, lines, language) = match &node.kind {
         NodeKind::Directory => ("directory".to_string(), None, None, None, None),
@@ -983,15 +992,11 @@ fn declaration_to_json(decl: &Declaration, public_only: bool) -> JsonDeclaration
 // ============================================================================
 
 fn calculate_summary(
-    tree: Option<&FileNode>,
+    tree_tokens: usize,
     codemaps: &[Codemap],
     selected_files: &[SelectedFile],
 ) -> TokenSummary {
-    // Calculate tree tokens (by rendering it)
-    let tree_tokens = tree.map_or(0, |t| {
-        let rendered = render_tree(t, &RenderOptions::with_metadata());
-        count_tokens(&rendered)
-    });
+    // tree_tokens is passed in to avoid re-rendering the tree
 
     // Sum codemap tokens
     let codemap_tokens: usize = codemaps.iter().map(|c| c.token_count).sum();
@@ -1002,10 +1007,11 @@ fn calculate_summary(
     // Build file breakdown
     let mut file_breakdown = BTreeMap::new();
 
-    let selected_set: HashSet<PathBuf> = selected_files.iter().map(|f| f.path.clone()).collect();
-    let codemap_map: BTreeMap<PathBuf, usize> = codemaps
+    let selected_set: HashSet<&PathBuf> = selected_files.iter().map(|f| &f.path).collect();
+    // Use HashMap for O(1) lookup instead of BTreeMap's O(log n)
+    let codemap_map: std::collections::HashMap<&PathBuf, usize> = codemaps
         .iter()
-        .map(|c| (c.path.clone(), c.token_count))
+        .map(|c| (&c.path, c.token_count))
         .collect();
 
     for file in selected_files {
@@ -1022,9 +1028,9 @@ fn calculate_summary(
     }
 
     for (path, tokens) in &codemap_map {
-        if !selected_set.contains(path) {
+        if !selected_set.contains(*path) {
             file_breakdown.insert(
-                path.clone(),
+                (*path).clone(),
                 FileTokenInfo {
                     tokens: *tokens,
                     selected: false,

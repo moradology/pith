@@ -203,10 +203,20 @@ pub fn is_binary(content: &[u8]) -> bool {
 }
 
 /// Check if content appears to be minified (very long lines).
+/// Uses early exit - returns as soon as a long line is found.
 pub fn is_minified(content: &[u8]) -> bool {
-    content
-        .split(|&b| b == b'\n')
-        .any(|line| line.len() > MAX_LINE_LENGTH)
+    let mut line_len = 0;
+    for &b in content {
+        if b == b'\n' {
+            line_len = 0;
+        } else {
+            line_len += 1;
+            if line_len > MAX_LINE_LENGTH {
+                return true; // Early exit
+            }
+        }
+    }
+    false
 }
 
 /// Check if content appears to be generated.

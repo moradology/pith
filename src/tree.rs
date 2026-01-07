@@ -149,7 +149,7 @@ impl FileNode {
 
 /// Options for rendering the tree.
 #[derive(Debug, Clone, Default)]
-pub struct RenderOptions {
+pub struct RenderOptions<'a> {
     /// Show file sizes.
     pub show_size: bool,
     /// Show line counts.
@@ -157,12 +157,12 @@ pub struct RenderOptions {
     /// Show detected language.
     pub show_language: bool,
     /// Paths that are selected (marked with *).
-    pub selected: HashSet<PathBuf>,
+    pub selected: HashSet<&'a PathBuf>,
     /// Paths that have codemaps (marked with +).
-    pub has_codemap: HashSet<PathBuf>,
+    pub has_codemap: HashSet<&'a PathBuf>,
 }
 
-impl RenderOptions {
+impl<'a> RenderOptions<'a> {
     /// Create options with all metadata enabled.
     pub fn with_metadata() -> Self {
         Self {
@@ -199,7 +199,7 @@ const SPACE: &str = "    ";
 /// let output = render_tree(&root, &RenderOptions::minimal());
 /// assert!(output.contains("main.rs"));
 /// ```
-pub fn render_tree(root: &FileNode, options: &RenderOptions) -> String {
+pub fn render_tree(root: &FileNode, options: &RenderOptions<'_>) -> String {
     // Pre-allocate for typical tree size
     let mut output = String::with_capacity(4096);
     render_node(&mut output, root, "", true, true, options);
@@ -212,7 +212,7 @@ fn render_node(
     prefix: &str,
     is_last: bool,
     is_root: bool,
-    options: &RenderOptions,
+    options: &RenderOptions<'_>,
 ) {
     // Render this node
     let branch = if is_root {
@@ -317,14 +317,25 @@ fn format_size(bytes: u64) -> String {
 
 /// Format number with thousands separators.
 pub fn format_number(n: usize) -> String {
-    let s = n.to_string();
-    let mut result = String::new();
-    for (i, c) in s.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
+    if n == 0 {
+        return "0".to_string();
+    }
+
+    // Build digits in reverse, then reverse once at the end
+    let mut result = String::with_capacity(16);
+    let mut n = n;
+    let mut digits = 0;
+
+    while n > 0 {
+        if digits > 0 && digits % 3 == 0 {
             result.push(',');
         }
-        result.push(c);
+        result.push((b'0' + (n % 10) as u8) as char);
+        n /= 10;
+        digits += 1;
     }
+
+    // Single reversal instead of double
     result.chars().rev().collect()
 }
 
@@ -443,9 +454,10 @@ mod tests {
         ));
         root.sort_children();
 
+        let main_path = PathBuf::from("project/main.rs");
         let options = RenderOptions {
-            selected: [PathBuf::from("project/main.rs")].into_iter().collect(),
-            has_codemap: [PathBuf::from("project/main.rs")].into_iter().collect(),
+            selected: [&main_path].into_iter().collect(),
+            has_codemap: [&main_path].into_iter().collect(),
             ..Default::default()
         };
 

@@ -347,12 +347,15 @@ fn run_tokens(
         };
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
     } else {
+        use std::io::{BufWriter, Write};
+        let stdout = std::io::stdout();
+        let mut out = BufWriter::new(stdout.lock());
         if per_file {
             for (file, count) in &file_tokens {
-                println!("{}: {} tokens", file.display(), count);
+                writeln!(out, "{}: {} tokens", file.display(), count).ok();
             }
         }
-        println!("Total: {} tokens", total);
+        writeln!(out, "Total: {} tokens", total).ok();
     }
 
     Ok(())

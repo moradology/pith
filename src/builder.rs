@@ -144,9 +144,9 @@ impl PithResult {
     }
 
     /// Build render options with codemap markers.
-    pub fn render_options(&self) -> RenderOptions {
+    pub fn render_options(&self) -> RenderOptions<'_> {
         RenderOptions {
-            has_codemap: self.codemaps.iter().map(|c| c.path.clone()).collect(),
+            has_codemap: self.codemaps.iter().map(|c| &c.path).collect(),
             ..Default::default()
         }
     }
@@ -182,15 +182,22 @@ fn extract_codemaps_parallel(
     let codemaps: Vec<Codemap> = files
         .into_par_iter()
         .filter_map(|(path, lang)| {
-            // Read file content
-            let content = std::fs::read_to_string(&path).ok()?;
+            // Read first 1KB for heuristics check (avoid reading entire large file)
+            use std::io::Read;
+            let mut first_kb = [0u8; 1024];
+            let n = {
+                let mut file = std::fs::File::open(&path).ok()?;
+                file.read(&mut first_kb).ok()?
+            };
 
-            // Apply content heuristics
-            let first_kb = &content.as_bytes()[..content.len().min(1024)];
-            match should_process(&path, Some(first_kb)) {
+            // Apply content heuristics on first 1KB only
+            match should_process(&path, Some(&first_kb[..n])) {
                 FilterResult::Accept(_) => {}
                 FilterResult::Reject(_) => return None,
             }
+
+            // Only now read full file content
+            let content = std::fs::read_to_string(&path).ok()?;
 
             // Extract codemap
             Some(extract_codemap(&path, &content, lang, extract_options))

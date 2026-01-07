@@ -1,5 +1,6 @@
 //! Rust codemap extraction using tree-sitter.
 
+use std::collections::HashMap;
 use tree_sitter::Node;
 
 use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text, with_rust_parser};
@@ -16,6 +17,7 @@ pub fn extract(
 
         let mut imports = Vec::new();
         let mut declarations = Vec::new();
+        let mut impl_blocks: Vec<(String, Vec<Declaration>)> = Vec::new();
 
         extract_from_node(
             tree.root_node(),
@@ -23,7 +25,33 @@ pub fn extract(
             options,
             &mut imports,
             &mut declarations,
+            &mut impl_blocks,
         );
+
+        // Merge impl methods with their structs using HashMap for O(1) lookup
+        if !impl_blocks.is_empty() {
+            // Build index: struct name -> position in declarations (clone names to avoid borrow)
+            let struct_indices: HashMap<String, usize> = declarations
+                .iter()
+                .enumerate()
+                .filter_map(|(i, d)| match d {
+                    Declaration::Struct { name, .. } => Some((name.clone(), i)),
+                    _ => None,
+                })
+                .collect();
+
+            // Merge impl methods using the index
+            for (impl_type, methods) in impl_blocks {
+                if let Some(&idx) = struct_indices.get(&impl_type) {
+                    if let Declaration::Struct { methods: struct_methods, .. } = &mut declarations[idx] {
+                        struct_methods.extend(methods);
+                    }
+                } else {
+                    // No matching struct found, add methods as standalone
+                    declarations.extend(methods);
+                }
+            }
+        }
 
         Ok((imports, declarations))
     })
@@ -35,6 +63,7 @@ fn extract_from_node(
     options: &ExtractOptions,
     imports: &mut Vec<Import>,
     declarations: &mut Vec<Declaration>,
+    impl_blocks: &mut Vec<(String, Vec<Declaration>)>,
 ) {
     let mut cursor = node.walk();
 
@@ -86,8 +115,10 @@ fn extract_from_node(
                 }
             }
             "impl_item" => {
-                // Extract impl methods and associate with their type
-                extract_impl(child, content, options, declarations);
+                // Collect impl blocks for later merging with HashMap
+                if let Some(impl_data) = extract_impl(child, content, options) {
+                    impl_blocks.push(impl_data);
+                }
             }
             _ => {}
         }
@@ -366,17 +397,15 @@ fn extract_const(node: Node, content: &str) -> Option<Declaration> {
     })
 }
 
+/// Extract impl block and return (type_name, methods) for later merging.
 fn extract_impl(
     node: Node,
     content: &str,
     options: &ExtractOptions,
-    declarations: &mut Vec<Declaration>,
-) {
+) -> Option<(String, Vec<Declaration>)> {
     // Get the type being implemented
     let impl_type = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content));
-
-    let Some(impl_type) = impl_type else { return };
+        .map(|n| node_text(n, content))?;
 
     // Extract methods from the impl block
     let mut methods = Vec::new();
@@ -392,24 +421,11 @@ fn extract_impl(
         }
     }
 
-    // Find the struct/enum declaration and add methods to it
-    for decl in declarations.iter_mut() {
-        match decl {
-            Declaration::Struct { name, methods: struct_methods, .. } if name == &impl_type => {
-                struct_methods.extend(methods);
-                return;
-            }
-            Declaration::Enum { name, .. } if name == &impl_type => {
-                // For enums, we could add methods but the current structure doesn't support it
-                // For now, just add as separate functions
-                break;
-            }
-            _ => {}
-        }
+    if methods.is_empty() {
+        None
+    } else {
+        Some((impl_type, methods))
     }
-
-    // If we didn't find a matching struct, add methods as standalone
-    declarations.extend(methods);
 }
 
 fn extract_visibility(node: Node, content: &str) -> Visibility {

@@ -104,13 +104,13 @@ pub struct WalkEntry {
 /// }
 /// ```
 pub fn walk(root: &Path) -> impl Iterator<Item = Result<WalkEntry, WalkError>> {
-    walk_with_options(root, WalkOptions::default())
+    walk_with_options(root, &WalkOptions::default())
 }
 
 /// Walk a directory tree with custom options.
 pub fn walk_with_options(
     root: &Path,
-    options: WalkOptions,
+    options: &WalkOptions,
 ) -> impl Iterator<Item = Result<WalkEntry, WalkError>> {
     let root = root.to_path_buf();
 
@@ -207,11 +207,11 @@ pub fn walk_with_options(
 /// println!("Files: {}", tree.file_count());
 /// ```
 pub fn build_tree(root: &Path) -> Result<FileNode, WalkError> {
-    build_tree_with_options(root, WalkOptions::default())
+    build_tree_with_options(root, &WalkOptions::default())
 }
 
 /// Build a complete file tree with custom options.
-pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<FileNode, WalkError> {
+pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<FileNode, WalkError> {
     if !root.exists() {
         return Err(WalkError::NotFound {
             path: root.to_path_buf(),
@@ -249,7 +249,7 @@ pub fn build_tree_with_options(root: &Path, options: WalkOptions) -> Result<File
     node_map.insert(root.to_path_buf(), root_node);
 
     // Collect entries (skipping the root itself)
-    let mut entries: Vec<WalkEntry> = walk_with_options(root, options.clone())
+    let mut entries: Vec<WalkEntry> = walk_with_options(root, options)
         .filter_map(|r| r.ok())
         .filter(|e| e.path != root)
         .collect();
@@ -419,7 +419,7 @@ mod tests {
         assert!(!paths.iter().any(|p| p.ends_with(".hidden.rs")));
 
         // With hidden
-        let entries: Vec<_> = walk_with_options(dir.path(), WalkOptions::with_hidden())
+        let entries: Vec<_> = walk_with_options(dir.path(), &WalkOptions::with_hidden())
             .filter_map(|r| r.ok())
             .collect();
         let paths: Vec<_> = entries.iter().map(|e| &e.path).collect();
@@ -465,7 +465,7 @@ mod tests {
         fs::write(dir.path().join("a/shallow.rs"), "").unwrap();
 
         let options = WalkOptions::default().max_depth(2);
-        let entries: Vec<_> = walk_with_options(dir.path(), options)
+        let entries: Vec<_> = walk_with_options(dir.path(), &options)
             .filter_map(|r| r.ok())
             .collect();
 

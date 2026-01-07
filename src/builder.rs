@@ -160,7 +160,7 @@ fn extract_codemaps_parallel(
     language_filter: Option<&[Language]>,
 ) -> Result<Vec<Codemap>, PithError> {
     // Collect files that pass filtering
-    let files: Vec<(PathBuf, Language)> = walk_with_options(root, walk_options.clone())
+    let files: Vec<(PathBuf, Language)> = walk_with_options(root, walk_options)
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.is_file)
         .filter_map(|entry| {

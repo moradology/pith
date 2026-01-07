@@ -18,31 +18,36 @@ use tree_sitter::{Node, Parser};
 thread_local! {
     static RUST_PARSER: RefCell<Parser> = RefCell::new({
         let mut p = Parser::new();
-        p.set_language(&tree_sitter_rust::LANGUAGE.into()).expect("rust language");
+        p.set_language(&tree_sitter_rust::LANGUAGE.into())
+            .expect("failed to load tree-sitter-rust grammar");
         p
     });
 
     static TS_PARSER: RefCell<Parser> = RefCell::new({
         let mut p = Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()).expect("typescript language");
+        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+            .expect("failed to load tree-sitter-typescript grammar");
         p
     });
 
     static TSX_PARSER: RefCell<Parser> = RefCell::new({
         let mut p = Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into()).expect("tsx language");
+        p.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
+            .expect("failed to load tree-sitter-tsx grammar");
         p
     });
 
     static PYTHON_PARSER: RefCell<Parser> = RefCell::new({
         let mut p = Parser::new();
-        p.set_language(&tree_sitter_python::LANGUAGE.into()).expect("python language");
+        p.set_language(&tree_sitter_python::LANGUAGE.into())
+            .expect("failed to load tree-sitter-python grammar");
         p
     });
 
     static GO_PARSER: RefCell<Parser> = RefCell::new({
         let mut p = Parser::new();
-        p.set_language(&tree_sitter_go::LANGUAGE.into()).expect("go language");
+        p.set_language(&tree_sitter_go::LANGUAGE.into())
+            .expect("failed to load tree-sitter-go grammar");
         p
     });
 }

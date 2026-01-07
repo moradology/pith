@@ -260,7 +260,9 @@ fn run_languages(json: bool) -> Result<(), PithError> {
             languages: Vec<LanguageInfo>,
         }
         let output = Output { languages };
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        let json = serde_json::to_string_pretty(&output)
+            .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
+        println!("{json}");
     } else {
         println!("Supported languages:");
         for lang in &languages {
@@ -345,7 +347,9 @@ fn run_tokens(
             encoding: encoding.to_string(),
             files,
         };
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        let json = serde_json::to_string_pretty(&output)
+            .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
+        println!("{json}");
     } else {
         use std::io::{BufWriter, Write};
         let stdout = std::io::stdout();
@@ -380,12 +384,14 @@ fn run_tree(
         ..Default::default()
     };
 
-    let tree = build_tree_with_options(&path, walk_opts)
+    let tree = build_tree_with_options(&path, &walk_opts)
         .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
 
     if json {
         // Use serde to serialize the tree
-        println!("{}", serde_json::to_string_pretty(&tree_to_json(&tree)).unwrap());
+        let json = serde_json::to_string_pretty(&tree_to_json(&tree))
+            .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
+        println!("{json}");
     } else {
         let render_opts = RenderOptions {
             show_size: !no_metadata,
@@ -523,7 +529,7 @@ fn run_context(
     let lang_set: Vec<Language> = lang_filter.into_iter().map(|l| l.into()).collect();
 
     // Build the file tree
-    let tree = build_tree_with_options(&path, WalkOptions::default())
+    let tree = build_tree_with_options(&path, &WalkOptions::default())
         .map_err(|e| PithError::Io(std::io::Error::other(e.to_string())))?;
 
     let extract_opts = ExtractOptions {

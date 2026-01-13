@@ -32,6 +32,9 @@ rayon = "1.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bytecount = "0.6"
+smallvec = "1.13"
+memmap2 = "0.9"
+compact_str = "0.8"
 
 [dev-dependencies]
 tempfile = "3.14"

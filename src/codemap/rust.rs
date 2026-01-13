@@ -148,7 +148,7 @@ fn extract_use(node: Node, content: &str) -> Option<Import> {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            return Some(Import { source, items });
+            return Some(Import { source, items: items.into() });
         }
     }
 
@@ -157,13 +157,13 @@ fn extract_use(node: Node, content: &str) -> Option<Import> {
     if parts.len() == 2 {
         let source = parts[1].to_string();
         let items = vec![parts[0].to_string()];
-        return Some(Import { source, items });
+        return Some(Import { source, items: items.into() });
     }
 
     // Fallback: just use the whole thing
     Some(Import {
         source: text.to_string(),
-        items: Vec::new(),
+        items: smallvec::smallvec![],
     })
 }
 
@@ -253,7 +253,7 @@ fn extract_struct(node: Node, content: &str, options: &ExtractOptions) -> Option
 
     Some(Declaration::Struct {
         name,
-        fields,
+        fields: fields.into(),
         visibility,
         location,
         methods: Vec::new(), // Will be populated by impl extraction
@@ -306,7 +306,7 @@ fn extract_enum(node: Node, content: &str, options: &ExtractOptions) -> Option<D
 
     Some(Declaration::Enum {
         name,
-        variants,
+        variants: variants.into(),
         visibility,
         location,
         doc,
@@ -340,7 +340,7 @@ fn extract_trait(node: Node, content: &str, options: &ExtractOptions) -> Option<
 
     Some(Declaration::Trait {
         name,
-        methods,
+        methods: methods.into(),
         location,
         doc,
     })

@@ -84,11 +84,11 @@ fn extract_import(node: tree_sitter::Node, content: &str) -> Option<Import> {
             })
             .unwrap_or_default();
 
-        Some(Import { source, items })
+        Some(Import { source, items: items.into() })
     } else {
         // import X
         let source = text.trim_start_matches("import ").trim().to_string();
-        Some(Import { source, items: Vec::new() })
+        Some(Import { source, items: smallvec::smallvec![] })
     }
 }
 

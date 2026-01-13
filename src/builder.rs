@@ -178,12 +178,20 @@ fn extract_codemaps_parallel(
         })
         .collect();
 
+    // Threshold for memory-mapping large files (5MB)
+    const MMAP_THRESHOLD: u64 = 5_000_000;
+
     // Extract codemaps in parallel
     let codemaps: Vec<Codemap> = files
         .into_par_iter()
         .filter_map(|(path, lang)| {
-            // Read first 1KB for heuristics check (avoid reading entire large file)
             use std::io::Read;
+
+            // Get file metadata for size-based optimizations
+            let metadata = std::fs::metadata(&path).ok()?;
+            let file_size = metadata.len();
+
+            // Read first 1KB for heuristics check
             let mut first_kb = [0u8; 1024];
             let n = {
                 let mut file = std::fs::File::open(&path).ok()?;
@@ -196,8 +204,23 @@ fn extract_codemaps_parallel(
                 FilterResult::Reject(_) => return None,
             }
 
-            // Only now read full file content
-            let content = std::fs::read_to_string(&path).ok()?;
+            // Read file content with size-based optimization
+            let content = if file_size as usize <= n {
+                // Small file: we already have it in the buffer
+                String::from_utf8(first_kb[..n].to_vec()).ok()?
+            } else if file_size > MMAP_THRESHOLD {
+                // Large file: use memory mapping to avoid heap allocation
+                use memmap2::Mmap;
+                let file = std::fs::File::open(&path).ok()?;
+                let mmap = unsafe { Mmap::map(&file).ok()? };
+                std::str::from_utf8(&mmap).ok()?.to_string()
+            } else {
+                // Medium file: pre-allocate capacity to avoid reallocs
+                let mut content = String::with_capacity(file_size as usize);
+                let mut file = std::fs::File::open(&path).ok()?;
+                file.read_to_string(&mut content).ok()?;
+                content
+            };
 
             // Extract codemap
             Some(extract_codemap(&path, &content, lang, extract_options))

@@ -41,7 +41,7 @@ pub struct FileNode {
     pub path: PathBuf,
     /// Type of node (file or directory).
     pub kind: NodeKind,
-    /// Child nodes (empty for files).
+    /// Child nodes (empty for files). Vec needed for recursive type.
     children: Vec<FileNode>,
 }
 

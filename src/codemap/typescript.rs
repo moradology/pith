@@ -112,7 +112,7 @@ fn extract_import(node: tree_sitter::Node, content: &str) -> Option<Import> {
         items.push("*".to_string());
     }
 
-    Some(Import { source, items })
+    Some(Import { source, items: items.into() })
 }
 
 fn extract_export(
@@ -331,7 +331,7 @@ fn extract_interface(
 
     Some(Declaration::Interface {
         name,
-        members,
+        members: members.into(),
         location,
         doc,
     })

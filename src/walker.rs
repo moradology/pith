@@ -3,12 +3,31 @@
 //! Uses the `ignore` crate to walk directories while respecting
 //! .gitignore, .git/info/exclude, global gitignore, and .pithignore.
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
 use thiserror::Error;
 
 use crate::tree::FileNode;
+
+/// Count lines in a file using streaming (8KB buffer) instead of loading entire file.
+/// Much more memory-efficient for large files.
+fn count_lines_streaming(path: &Path) -> Option<usize> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let mut count = 0;
+    for line in reader.lines() {
+        if line.is_err() {
+            // Binary or non-UTF8 file, fall back to byte counting
+            return std::fs::read(path)
+                .ok()
+                .map(|bytes| bytecount::count(&bytes, b'\n'));
+        }
+        count += 1;
+    }
+    Some(count)
+}
 
 /// Errors that can occur during directory walking.
 #[derive(Debug, Error)]
@@ -233,10 +252,8 @@ pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<Fil
             .and_then(|e| e.to_str())
             .map(|s| s.to_lowercase());
 
-        // Count lines for text files (byte scan, no UTF-8 allocation)
-        let lines = std::fs::read(root)
-            .ok()
-            .map(|bytes| bytecount::count(&bytes, b'\n'));
+        // Count lines using streaming (8KB buffer instead of loading entire file)
+        let lines = count_lines_streaming(root);
 
         return Ok(FileNode::file(name, root.to_path_buf(), extension, metadata.len(), lines));
     }
@@ -269,10 +286,8 @@ pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<Fil
                 .and_then(|e| e.to_str())
                 .map(|s| s.to_lowercase());
 
-            // Count lines for text files (byte scan, no UTF-8 allocation)
-            let lines = std::fs::read(&entry.path)
-                .ok()
-                .map(|bytes| bytecount::count(&bytes, b'\n'));
+            // Count lines using streaming (8KB buffer instead of loading entire file)
+            let lines = count_lines_streaming(&entry.path);
 
             FileNode::file(&entry_name, &entry.path, extension, entry.size.unwrap_or(0), lines)
         } else {

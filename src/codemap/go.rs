@@ -93,7 +93,7 @@ fn extract_import_spec(node: tree_sitter::Node, content: &str) -> Option<Import>
 
     Some(Import {
         source: path,
-        items: Vec::new(),
+        items: smallvec::smallvec![],
     })
 }
 
@@ -256,7 +256,7 @@ fn extract_type_spec(
 
         return Some(Declaration::Struct {
             name,
-            fields,
+            fields: fields.into(),
             visibility,
             location,
             methods: Vec::new(),
@@ -287,7 +287,7 @@ fn extract_type_spec(
 
         return Some(Declaration::Interface {
             name,
-            members,
+            members: members.into(),
             location,
             doc,
         });

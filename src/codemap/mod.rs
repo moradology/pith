@@ -12,6 +12,7 @@ mod go;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
+use smallvec::SmallVec;
 use tree_sitter::{Node, Parser};
 
 // Thread-local parser caching to avoid re-initialization overhead
@@ -173,16 +174,16 @@ pub enum Declaration {
     /// A struct declaration with fields and optional methods (Rust struct, Go struct).
     Struct {
         name: String,
-        fields: Vec<Field>,
+        fields: SmallVec<[Field; 6]>,
         visibility: Visibility,
         location: Location,
-        methods: Vec<Declaration>,
+        methods: Vec<Declaration>, // Vec needed for recursive type
         doc: Option<String>,
     },
     /// An enum declaration with variants (Rust enum).
     Enum {
         name: String,
-        variants: Vec<String>,
+        variants: SmallVec<[String; 6]>,
         visibility: Visibility,
         location: Location,
         doc: Option<String>,
@@ -190,7 +191,7 @@ pub enum Declaration {
     /// A trait declaration with method signatures (Rust trait).
     Trait {
         name: String,
-        methods: Vec<String>,
+        methods: SmallVec<[String; 8]>,
         location: Location,
         doc: Option<String>,
     },
@@ -211,14 +212,14 @@ pub enum Declaration {
     /// An interface declaration (Go interface, TS interface).
     Interface {
         name: String,
-        members: Vec<String>,
+        members: SmallVec<[String; 8]>,
         location: Location,
         doc: Option<String>,
     },
     /// A class declaration with members (Python class, JS/TS class).
     Class {
         name: String,
-        members: Vec<Declaration>,
+        members: Vec<Declaration>, // Vec needed for recursive type
         visibility: Visibility,
         location: Location,
         doc: Option<String>,
@@ -280,7 +281,7 @@ pub struct Import {
     /// Module path (e.g., "std::collections" or "react").
     pub source: String,
     /// Imported items. Empty for wildcard or default imports.
-    pub items: Vec<String>,
+    pub items: SmallVec<[String; 4]>,
 }
 
 /// Extracted codemap from a source file.
@@ -291,9 +292,9 @@ pub struct Codemap {
     /// Detected language.
     pub language: Language,
     /// Import statements.
-    pub imports: Vec<Import>,
+    pub imports: SmallVec<[Import; 8]>,
     /// Extracted declarations.
-    pub declarations: Vec<Declaration>,
+    pub declarations: SmallVec<[Declaration; 16]>,
     /// Token count of rendered codemap.
     pub token_count: usize,
     /// Parse error if extraction failed.
@@ -306,8 +307,8 @@ impl Codemap {
         Self {
             path,
             language,
-            imports: Vec::new(),
-            declarations: Vec::new(),
+            imports: SmallVec::new(),
+            declarations: SmallVec::new(),
             token_count: 0,
             parse_error: None,
         }
@@ -318,8 +319,8 @@ impl Codemap {
         Self {
             path,
             language,
-            imports: Vec::new(),
-            declarations: Vec::new(),
+            imports: SmallVec::new(),
+            declarations: SmallVec::new(),
             token_count: 0,
             parse_error: Some(error),
         }
@@ -421,8 +422,8 @@ pub fn extract_codemap(
 
     match result {
         Ok((imports, declarations)) => {
-            codemap.imports = imports;
-            codemap.declarations = declarations;
+            codemap.imports = imports.into();
+            codemap.declarations = declarations.into();
         }
         Err(e) => {
             codemap.parse_error = Some(e);

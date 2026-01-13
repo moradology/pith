@@ -738,7 +738,7 @@ fn codemap_to_json(codemap: &Codemap, public_only: bool) -> JsonCodemap {
         .iter()
         .map(|i| JsonImport {
             source: i.source.clone(),
-            items: i.items.clone(),
+            items: i.items.to_vec(),
         })
         .collect();
 
@@ -850,7 +850,7 @@ fn declaration_to_json(decl: &Declaration, public_only: bool) -> JsonDeclaration
             doc: doc.clone(),
             fields: Vec::new(),
             methods: Vec::new(),
-            variants: variants.clone(),
+            variants: variants.to_vec(),
             members: Vec::new(),
             target: None,
             ty: None,
@@ -875,7 +875,7 @@ fn declaration_to_json(decl: &Declaration, public_only: bool) -> JsonDeclaration
             fields: Vec::new(),
             methods: Vec::new(),
             variants: Vec::new(),
-            members: methods.clone(),
+            members: methods.to_vec(),
             target: None,
             ty: None,
         },
@@ -947,7 +947,7 @@ fn declaration_to_json(decl: &Declaration, public_only: bool) -> JsonDeclaration
             fields: Vec::new(),
             methods: Vec::new(),
             variants: Vec::new(),
-            members: members.clone(),
+            members: members.to_vec(),
             target: None,
             ty: None,
         },

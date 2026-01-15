@@ -2,7 +2,7 @@
 name = "pith"
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "Generate optimized codebase context for LLMs"
 repository = "https://github.com/moradology/pith"
 keywords = ["llm", "context", "codemap", "tree-sitter"]

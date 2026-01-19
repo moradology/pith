@@ -3,20 +3,20 @@
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::return_self_not_must_use)] // Builder pattern doesn't need this
-#![allow(clippy::cast_precision_loss)]      // Acceptable for file size display
-#![allow(clippy::too_many_lines)]           // Some functions are naturally long
-#![allow(clippy::struct_excessive_bools)]   // Config structs need bool flags
-#![allow(clippy::missing_errors_doc)]       // Will add incrementally
-#![allow(clippy::missing_panics_doc)]       // Will add incrementally
-#![allow(clippy::doc_markdown)]             // Too many false positives
-#![allow(clippy::similar_names)]            // Variable naming is fine
-#![allow(clippy::match_same_arms)]          // Intentional for clarity
-#![allow(clippy::needless_pass_by_value)]   // Sometimes clearer API
-#![allow(clippy::uninlined_format_args)]    // Style preference
+#![allow(clippy::cast_precision_loss)] // Acceptable for file size display
+#![allow(clippy::too_many_lines)] // Some functions are naturally long
+#![allow(clippy::struct_excessive_bools)] // Config structs need bool flags
+#![allow(clippy::missing_errors_doc)] // Will add incrementally
+#![allow(clippy::missing_panics_doc)] // Will add incrementally
+#![allow(clippy::doc_markdown)] // Too many false positives
+#![allow(clippy::similar_names)] // Variable naming is fine
+#![allow(clippy::match_same_arms)] // Intentional for clarity
+#![allow(clippy::needless_pass_by_value)] // Sometimes clearer API
+#![allow(clippy::uninlined_format_args)] // Style preference
 #![allow(clippy::redundant_closure_for_method_calls)] // Sometimes clearer
-#![allow(clippy::format_push_string)]       // Acceptable in output formatting
-#![allow(clippy::single_match_else)]        // Match is sometimes clearer
-#![allow(clippy::unnecessary_wraps)]        // Some wraps are for API consistency
+#![allow(clippy::format_push_string)] // Acceptable in output formatting
+#![allow(clippy::single_match_else)] // Match is sometimes clearer
+#![allow(clippy::unnecessary_wraps)] // Some wraps are for API consistency
 
 //! Pith - Generate optimized codebase context for LLMs.
 //!
@@ -37,7 +37,7 @@
 //!     .unwrap();
 //!
 //! println!("Found {} files with codemaps", result.codemaps.len());
-//! println!("Total tokens: {}", result.total_tokens());
+//! println!("Codemaps: {}", result.codemaps.len());
 //! ```
 //!
 //! # Modules
@@ -57,21 +57,21 @@
 //! - Python (`.py`, `.pyi`)
 //! - Go (`.go`)
 
-pub mod tokens;
-pub mod filter;
+pub mod builder;
+pub mod codemap;
 pub mod errors;
+pub mod filter;
+pub mod output;
+pub mod tokens;
 pub mod tree;
 pub mod walker;
-pub mod codemap;
-pub mod output;
-pub mod builder;
 
 // Re-export key types at crate root for convenience
 pub use builder::{Pith, PithResult};
-pub use codemap::{Codemap, CodemapError, Declaration, Visibility, Location};
+pub use codemap::{Codemap, CodemapError, Declaration, Location, Visibility};
 pub use errors::PithError;
 pub use filter::{FilterError, Language};
 pub use output::OutputError;
-pub use tree::{FileNode, NodeKind, RenderOptions};
 pub use tokens::{count_tokens, Encoding, TokenCounter};
+pub use tree::{FileNode, NodeKind, RenderOptions};
 pub use walker::WalkError;

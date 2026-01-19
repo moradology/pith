@@ -2,20 +2,20 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use rayon::prelude::*;
 use clap_complete::{generate, Shell};
 use glob::Pattern;
-use ignore::WalkBuilder;
 use pith::codemap::{extract_codemap, ExtractOptions};
 use pith::errors::{exit_code, PithError};
-use pith::filter::{detect_language, passes_extension_filter, Language};
+use pith::filter::{detect_language, should_process, FilterResult, Language};
 use pith::output::{format_output, OutputFormat, OutputOptions, SelectedFile};
-use pith::tokens::{count_tokens, count_tokens_with_encoding, Encoding};
+use pith::tokens::{count_tokens_with_encoding, Encoding};
 use pith::tree::{render_tree, RenderOptions};
-use pith::walker::{build_tree_with_options, WalkOptions};
+use pith::walker::{build_tree_with_options, walk, WalkOptions};
+use rayon::prelude::*;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -70,6 +70,10 @@ enum Commands {
         #[arg(long)]
         include_private: bool,
 
+        /// Token encoding for token summary
+        #[arg(long, default_value = "cl100k")]
+        encoding: EncodingArg,
+
         /// Filter to specific language(s)
         #[arg(long, value_delimiter = ',')]
         lang: Vec<LanguageArg>,
@@ -92,6 +96,10 @@ enum Commands {
         /// Include private items
         #[arg(long)]
         include_private: bool,
+
+        /// Token encoding for token summary
+        #[arg(long, default_value = "cl100k")]
+        encoding: EncodingArg,
 
         /// Select files for full content inclusion
         #[arg(long)]
@@ -193,16 +201,33 @@ fn main() {
             json,
             include_docs,
             include_private,
+            encoding,
             lang,
-        } => run_codemap(path, json, include_docs, include_private, lang),
+        } => run_codemap(
+            path,
+            json,
+            include_docs,
+            include_private,
+            encoding.into(),
+            lang,
+        ),
         Commands::Context {
             path,
             json,
             include_docs,
             include_private,
+            encoding,
             select,
             lang,
-        } => run_context(path, json, include_docs, include_private, select, lang),
+        } => run_context(
+            path,
+            json,
+            include_docs,
+            include_private,
+            encoding.into(),
+            select,
+            lang,
+        ),
         Commands::Tokens {
             path,
             json,
@@ -218,7 +243,18 @@ fn main() {
 
     if let Err(e) = result {
         if json_output {
-            eprintln!(r#"{{"error": "{}"}}"#, e);
+            #[derive(Serialize)]
+            struct ErrorOutput {
+                error: String,
+            }
+
+            let payload = ErrorOutput {
+                error: e.to_string(),
+            };
+
+            let json = serde_json::to_string(&payload)
+                .unwrap_or_else(|_| "{\"error\":\"serialization failed\"}".to_string());
+            eprintln!("{json}");
         } else {
             eprintln!("error: {}", e);
         }
@@ -250,7 +286,11 @@ fn run_languages(json: bool) -> Result<(), PithError> {
         .iter()
         .map(|lang| LanguageInfo {
             name: lang.to_string(),
-            extensions: lang.extensions().iter().map(|e| format!(".{}", e)).collect(),
+            extensions: lang
+                .extensions()
+                .iter()
+                .map(|e| format!(".{}", e))
+                .collect(),
         })
         .collect();
 
@@ -292,25 +332,34 @@ fn run_tokens(
         let count = count_tokens_with_encoding(&content, encoding);
         file_tokens.insert(path.clone(), count);
     } else {
-        let walker = WalkBuilder::new(&path)
-            .hidden(false)
-            .git_ignore(true)
-            .build();
-
-        // Collect entries for parallel processing
-        let entries: Vec<_> = walker
-            .flatten()
-            .filter(|e| e.path().is_file())
-            .filter(|e| passes_extension_filter(e.path()).is_some())
+        // Collect file paths for parallel processing
+        let paths: Vec<PathBuf> = walk(&path)
+            .filter_map(|e| e.ok())
+            .filter(|e| e.is_file)
+            .map(|e| e.path)
             .collect();
 
-        // Process in parallel
-        file_tokens = entries
+        file_tokens = paths
             .par_iter()
-            .filter_map(|entry| {
-                let entry_path = entry.path();
-                let content = fs::read_to_string(entry_path).ok()?;
+            .filter_map(|entry_path| {
+                use std::io::Read;
+
+                let mut file = std::fs::File::open(entry_path).ok()?;
+
+                let mut first_kb = [0u8; 1024];
+                let n = file.read(&mut first_kb).ok()?;
+
+                match should_process(entry_path, Some(&first_kb[..n])) {
+                    FilterResult::Accept(_) => {}
+                    FilterResult::Reject(_) => return None,
+                }
+
+                let mut content = String::new();
+                content.push_str(std::str::from_utf8(&first_kb[..n]).ok()?);
+                file.read_to_string(&mut content).ok()?;
+
                 let count = count_tokens_with_encoding(&content, encoding);
+
                 let relative = entry_path
                     .strip_prefix(&path)
                     .unwrap_or(entry_path)
@@ -425,9 +474,11 @@ fn tree_to_json(node: &pith::tree::FileNode) -> JsonTreeNode {
 
     let (kind, extension, size, lines) = match &node.kind {
         NodeKind::Directory => ("directory".to_string(), None, None, None),
-        NodeKind::File { extension, size, lines } => {
-            ("file".to_string(), extension.clone(), Some(*size), *lines)
-        }
+        NodeKind::File {
+            extension,
+            size,
+            lines,
+        } => ("file".to_string(), extension.clone(), Some(*size), *lines),
     };
 
     JsonTreeNode {
@@ -448,6 +499,7 @@ fn run_codemap(
     json: bool,
     include_docs: bool,
     include_private: bool,
+    encoding: Encoding,
     lang_filter: Vec<LanguageArg>,
 ) -> Result<(), PithError> {
     if !path.exists() {
@@ -463,16 +515,12 @@ fn run_codemap(
 
     let mut codemaps = Vec::new();
 
-    let walker = WalkBuilder::new(&path)
-        .hidden(false)
-        .git_ignore(true)
-        .build();
-
-    for entry in walker.flatten() {
-        let entry_path = entry.path();
-        if !entry_path.is_file() {
+    for entry in walk(&path).flatten() {
+        if !entry.is_file {
             continue;
         }
+
+        let entry_path = entry.path.as_path();
 
         let lang = match detect_language(entry_path) {
             Some(l) => l,
@@ -484,10 +532,35 @@ fn run_codemap(
             continue;
         }
 
-        let content = match fs::read_to_string(entry_path) {
-            Ok(c) => c,
+        // Check heuristics on first 1KB
+        let mut file = match std::fs::File::open(entry_path) {
+            Ok(f) => f,
             Err(_) => continue,
         };
+
+        let mut first_kb = [0u8; 1024];
+        let n = {
+            use std::io::Read;
+            match file.read(&mut first_kb) {
+                Ok(n) => n,
+                Err(_) => continue,
+            }
+        };
+
+        match should_process(entry_path, Some(&first_kb[..n])) {
+            FilterResult::Accept(_) => {}
+            FilterResult::Reject(_) => continue,
+        }
+
+        let mut content = String::new();
+        let prefix = match std::str::from_utf8(&first_kb[..n]) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        content.push_str(prefix);
+        if file.read_to_string(&mut content).is_err() {
+            continue;
+        }
 
         let codemap = extract_codemap(entry_path, &content, lang, &extract_opts);
         codemaps.push(codemap);
@@ -498,7 +571,11 @@ fn run_codemap(
     }
 
     let output_opts = OutputOptions {
-        format: if json { OutputFormat::Json } else { OutputFormat::Xml },
+        format: if json {
+            OutputFormat::Json
+        } else {
+            OutputFormat::Xml
+        },
         include_tree: false,
         include_codemaps: true,
         include_selected_files: false,
@@ -506,7 +583,7 @@ fn run_codemap(
         public_only: !include_private,
     };
 
-    let output = format_output(None, &codemaps, &[], &output_opts);
+    let output = format_output(None, &codemaps, &[], &output_opts, encoding);
     print!("{}", output);
 
     Ok(())
@@ -519,6 +596,7 @@ fn run_context(
     json: bool,
     include_docs: bool,
     include_private: bool,
+    encoding: Encoding,
     select_patterns: Vec<String>,
     lang_filter: Vec<LanguageArg>,
 ) -> Result<(), PithError> {
@@ -546,20 +624,14 @@ fn run_context(
     let mut codemaps = Vec::new();
     let mut selected_files = Vec::new();
 
-    let walker = WalkBuilder::new(&path)
-        .hidden(false)
-        .git_ignore(true)
-        .build();
-
-    for entry in walker.flatten() {
-        let entry_path = entry.path();
-        if !entry_path.is_file() {
+    for entry in walk(&path).flatten() {
+        if !entry.is_file {
             continue;
         }
 
-        let relative = entry_path
-            .strip_prefix(&path)
-            .unwrap_or(entry_path);
+        let entry_path = entry.path.as_path();
+
+        let relative = entry_path.strip_prefix(&path).unwrap_or(entry_path);
         let relative_str = relative.to_string_lossy();
 
         // Check if file matches any select pattern
@@ -568,11 +640,36 @@ fn run_context(
         // Check language
         let lang = detect_language(entry_path);
 
-        // Read content
-        let content = match fs::read_to_string(entry_path) {
-            Ok(c) => c,
+        // Check heuristics on first 1KB (binary/minified/generated)
+        let mut file = match std::fs::File::open(entry_path) {
+            Ok(f) => f,
             Err(_) => continue,
         };
+
+        let mut first_kb = [0u8; 1024];
+        let n = {
+            use std::io::Read;
+            match file.read(&mut first_kb) {
+                Ok(n) => n,
+                Err(_) => continue,
+            }
+        };
+
+        match should_process(entry_path, Some(&first_kb[..n])) {
+            FilterResult::Accept(_) => {}
+            FilterResult::Reject(_) => continue,
+        }
+
+        // Read full content (reuse already-read prefix)
+        let mut content = String::new();
+        let prefix = match std::str::from_utf8(&first_kb[..n]) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        content.push_str(prefix);
+        if file.read_to_string(&mut content).is_err() {
+            continue;
+        }
 
         // Extract codemap if it's a supported language
         if let Some(lang) = lang {
@@ -586,7 +683,7 @@ fn run_context(
         // Add to selected files if it matches patterns
         if is_selected {
             let lines = content.lines().count();
-            let tokens = count_tokens(&content);
+            let tokens = count_tokens_with_encoding(&content, encoding);
             selected_files.push(SelectedFile {
                 path: entry_path.to_path_buf(),
                 content,
@@ -601,7 +698,11 @@ fn run_context(
     }
 
     let output_opts = OutputOptions {
-        format: if json { OutputFormat::Json } else { OutputFormat::Xml },
+        format: if json {
+            OutputFormat::Json
+        } else {
+            OutputFormat::Xml
+        },
         include_tree: true,
         include_codemaps: true,
         include_selected_files: !selected_files.is_empty(),
@@ -609,7 +710,13 @@ fn run_context(
         public_only: !include_private,
     };
 
-    let output = format_output(Some(&tree), &codemaps, &selected_files, &output_opts);
+    let output = format_output(
+        Some(&tree),
+        &codemaps,
+        &selected_files,
+        &output_opts,
+        encoding,
+    );
     print!("{}", output);
 
     Ok(())

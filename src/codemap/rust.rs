@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 use tree_sitter::Node;
 
-use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text, with_rust_parser};
+use super::{
+    find_child_by_kind, node_text, with_rust_parser, Declaration, ExtractOptions, Field, Import,
+    Location, Visibility,
+};
 
 /// Extract imports and declarations from Rust source code.
 pub fn extract(
@@ -43,7 +46,11 @@ pub fn extract(
             // Merge impl methods using the index
             for (impl_type, methods) in impl_blocks {
                 if let Some(&idx) = struct_indices.get(&impl_type) {
-                    if let Declaration::Struct { methods: struct_methods, .. } = &mut declarations[idx] {
+                    if let Declaration::Struct {
+                        methods: struct_methods,
+                        ..
+                    } = &mut declarations[idx]
+                    {
                         struct_methods.extend(methods);
                     }
                 } else {
@@ -54,7 +61,7 @@ pub fn extract(
         }
 
         Ok((imports, declarations))
-    })
+    })?
 }
 
 fn extract_from_node(
@@ -97,7 +104,9 @@ fn extract_from_node(
             }
             "trait_item" => {
                 if let Some(decl) = extract_trait(child, content, options) {
-                    declarations.push(decl);
+                    if options.include_private || decl.visibility() == Visibility::Public {
+                        declarations.push(decl);
+                    }
                 }
             }
             "type_item" => {
@@ -137,27 +146,41 @@ fn extract_use(node: Node, content: &str) -> Option<Import> {
         .trim();
 
     // Handle different use patterns
-    if text.contains('{') {
+    if let Some(open_brace) = text.find('{') {
         // use foo::{bar, baz}
-        let parts: Vec<&str> = text.splitn(2, "::").collect();
-        if parts.len() == 2 {
-            let source = parts[0].to_string();
-            let items_str = parts[1].trim_start_matches('{').trim_end_matches('}');
-            let items: Vec<String> = items_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            return Some(Import { source, items: items.into() });
-        }
+        // use crate::foo::{bar, baz}
+        // use foo::{self, bar}
+        // NOTE: We intentionally keep aliases as written: `bar as baz`.
+
+        let before_brace = text[..open_brace].trim_end();
+        let source = before_brace
+            .strip_suffix("::")
+            .unwrap_or(before_brace)
+            .trim()
+            .to_string();
+
+        let close_brace = text.rfind('}')?;
+        let items_str = text[open_brace + 1..close_brace].trim();
+
+        let items: Vec<String> = items_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        return Some(Import {
+            source,
+            items: items.into(),
+        });
     }
 
     // Simple use: use foo::bar
-    let parts: Vec<&str> = text.rsplitn(2, "::").collect();
-    if parts.len() == 2 {
-        let source = parts[1].to_string();
-        let items = vec![parts[0].to_string()];
-        return Some(Import { source, items: items.into() });
+    // Also handle alias: use foo::bar as baz
+    if let Some((source, item)) = text.rsplit_once("::") {
+        return Some(Import {
+            source: source.to_string(),
+            items: smallvec::smallvec![item.trim().to_string()],
+        });
     }
 
     // Fallback: just use the whole thing
@@ -168,8 +191,7 @@ fn extract_use(node: Node, content: &str) -> Option<Import> {
 }
 
 fn extract_function(node: Node, content: &str, options: &ExtractOptions) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "identifier").map(|n| node_text(n, content))?;
 
     let visibility = extract_visibility(node, content);
 
@@ -177,15 +199,13 @@ fn extract_function(node: Node, content: &str, options: &ExtractOptions) -> Opti
     let signature = build_function_signature(node, content);
 
     // Check for async - try node children first, then signature text
-    let is_async = node.children(&mut node.walk())
+    let is_async = node
+        .children(&mut node.walk())
         .any(|c| c.kind() == "async" || c.kind() == "async_specifier")
         || signature.starts_with("async ")
         || signature.contains(" async ");
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_doc_comment(node, content)
@@ -224,8 +244,7 @@ fn build_function_signature(node: Node, content: &str) -> String {
 }
 
 fn extract_struct(node: Node, content: &str, options: &ExtractOptions) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let visibility = extract_visibility(node, content);
 
@@ -240,10 +259,7 @@ fn extract_struct(node: Node, content: &str, options: &ExtractOptions) -> Option
         }
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_doc_comment(node, content)
@@ -262,8 +278,7 @@ fn extract_struct(node: Node, content: &str, options: &ExtractOptions) -> Option
 }
 
 fn extract_field(node: Node, content: &str) -> Option<Field> {
-    let name = find_child_by_kind(node, "field_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "field_identifier").map(|n| node_text(n, content))?;
 
     let ty = find_child_by_kind(node, "type_identifier")
         .or_else(|| find_child_by_kind(node, "generic_type"))
@@ -274,12 +289,15 @@ fn extract_field(node: Node, content: &str) -> Option<Field> {
 
     let visibility = extract_visibility(node, content);
 
-    Some(Field { name, ty, visibility })
+    Some(Field {
+        name,
+        ty,
+        visibility,
+    })
 }
 
 fn extract_enum(node: Node, content: &str, options: &ExtractOptions) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let visibility = extract_visibility(node, content);
 
@@ -293,10 +311,7 @@ fn extract_enum(node: Node, content: &str, options: &ExtractOptions) -> Option<D
         }
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_doc_comment(node, content)
@@ -314,8 +329,7 @@ fn extract_enum(node: Node, content: &str, options: &ExtractOptions) -> Option<D
 }
 
 fn extract_trait(node: Node, content: &str, options: &ExtractOptions) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let mut methods = Vec::new();
     if let Some(body) = find_child_by_kind(node, "declaration_list") {
@@ -327,10 +341,9 @@ fn extract_trait(node: Node, content: &str, options: &ExtractOptions) -> Option<
         }
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let visibility = extract_visibility(node, content);
+
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_doc_comment(node, content)
@@ -341,14 +354,14 @@ fn extract_trait(node: Node, content: &str, options: &ExtractOptions) -> Option<
     Some(Declaration::Trait {
         name,
         methods: methods.into(),
+        visibility,
         location,
         doc,
     })
 }
 
 fn extract_type_alias(node: Node, content: &str) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let visibility = extract_visibility(node, content);
 
@@ -360,10 +373,7 @@ fn extract_type_alias(node: Node, content: &str) -> Option<Declaration> {
         .map(|s| s.trim().trim_end_matches(';').to_string())
         .unwrap_or_default();
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     Some(Declaration::TypeAlias {
         name,
@@ -374,8 +384,7 @@ fn extract_type_alias(node: Node, content: &str) -> Option<Declaration> {
 }
 
 fn extract_const(node: Node, content: &str) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "identifier").map(|n| node_text(n, content))?;
 
     let visibility = extract_visibility(node, content);
 
@@ -384,10 +393,7 @@ fn extract_const(node: Node, content: &str) -> Option<Declaration> {
         .map(|n| node_text(n, content))
         .unwrap_or_default();
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     Some(Declaration::Const {
         name,
@@ -404,8 +410,7 @@ fn extract_impl(
     options: &ExtractOptions,
 ) -> Option<(String, Vec<Declaration>)> {
     // Get the type being implemented
-    let impl_type = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let impl_type = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     // Extract methods from the impl block
     let mut methods = Vec::new();
@@ -459,10 +464,7 @@ fn extract_doc_comment(node: Node, content: &str) -> Option<String> {
             let text = node_text(sibling, content);
             if text.starts_with("/**") {
                 // Block doc comment
-                let inner = text
-                    .trim_start_matches("/**")
-                    .trim_end_matches("*/")
-                    .trim();
+                let inner = text.trim_start_matches("/**").trim_end_matches("*/").trim();
                 return Some(inner.to_string());
             }
             break;
@@ -495,7 +497,9 @@ pub fn hello(name: &str) -> String {
         assert_eq!(decls.len(), 1);
 
         match &decls[0] {
-            Declaration::Function { name, visibility, .. } => {
+            Declaration::Function {
+                name, visibility, ..
+            } => {
                 assert_eq!(name, "hello");
                 assert_eq!(*visibility, Visibility::Public);
             }
@@ -515,7 +519,12 @@ pub struct Config {
         assert_eq!(decls.len(), 1);
 
         match &decls[0] {
-            Declaration::Struct { name, fields, visibility, .. } => {
+            Declaration::Struct {
+                name,
+                fields,
+                visibility,
+                ..
+            } => {
                 assert_eq!(name, "Config");
                 assert_eq!(*visibility, Visibility::Public);
                 assert_eq!(fields.len(), 2);
@@ -548,28 +557,66 @@ pub enum Status {
     #[test]
     fn test_extract_use() {
         let code = r#"
-use std::collections::HashMap;
-use std::io::{Read, Write};
-"#;
+ use std::collections::HashMap;
+ use std::io::{Read, Write};
+ use crate::foo::{bar, baz};
+ use foo::bar as baz;
+ use foo::{self, qux};
+ "#;
         let (imports, _) = extract(code, &ExtractOptions::default()).unwrap();
-        assert_eq!(imports.len(), 2);
+
+        assert!(imports.iter().any(|i| {
+            i.source == "std::collections" && i.items.iter().any(|it| it == "HashMap")
+        }));
+        assert!(imports.iter().any(|i| {
+            i.source == "std::io"
+                && i.items.iter().any(|it| it == "Read")
+                && i.items.iter().any(|it| it == "Write")
+        }));
+        assert!(imports.iter().any(|i| {
+            i.source == "crate::foo"
+                && i.items.iter().any(|it| it == "bar")
+                && i.items.iter().any(|it| it == "baz")
+        }));
+        assert!(imports
+            .iter()
+            .any(|i| { i.source == "foo" && i.items.iter().any(|it| it == "bar as baz") }));
+        assert!(imports.iter().any(|i| {
+            i.source == "foo"
+                && i.items.iter().any(|it| it == "self")
+                && i.items.iter().any(|it| it == "qux")
+        }));
     }
 
     #[test]
     fn test_private_filtering() {
         let code = r#"
-pub fn public_fn() {}
-fn private_fn() {}
-"#;
+ pub fn public_fn() {}
+ fn private_fn() {}
+ 
+ pub trait PublicTrait {
+     fn a(&self);
+ }
+ trait PrivateTrait {
+     fn b(&self);
+ }
+ "#;
         // With include_private = false (default)
         let (_, decls) = extract(code, &ExtractOptions::default()).unwrap();
-        assert_eq!(decls.len(), 1);
-        assert_eq!(decls[0].name(), "public_fn");
+        assert_eq!(decls.len(), 2);
+        assert!(decls.iter().any(|d| d.name() == "public_fn"));
+        assert!(decls.iter().any(|d| d.name() == "PublicTrait"));
+        assert!(!decls.iter().any(|d| d.name() == "PrivateTrait"));
 
         // With include_private = true
-        let opts = ExtractOptions { include_private: true, ..Default::default() };
+        let opts = ExtractOptions {
+            include_private: true,
+            ..Default::default()
+        };
         let (_, decls) = extract(code, &opts).unwrap();
-        assert_eq!(decls.len(), 2);
+        assert_eq!(decls.len(), 4);
+        assert!(decls.iter().any(|d| d.name() == "private_fn"));
+        assert!(decls.iter().any(|d| d.name() == "PrivateTrait"));
     }
 
     #[test]

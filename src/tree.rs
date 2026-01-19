@@ -98,12 +98,10 @@ impl FileNode {
 
     /// Sort children: directories first, then alphabetically.
     pub fn sort_children(&mut self) {
-        self.children.sort_by(|a, b| {
-            match (&a.kind, &b.kind) {
-                (NodeKind::Directory, NodeKind::File { .. }) => Ordering::Less,
-                (NodeKind::File { .. }, NodeKind::Directory) => Ordering::Greater,
-                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            }
+        self.children.sort_by(|a, b| match (&a.kind, &b.kind) {
+            (NodeKind::Directory, NodeKind::File { .. }) => Ordering::Less,
+            (NodeKind::File { .. }, NodeKind::Directory) => Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         });
 
         // Recursively sort children's children
@@ -141,7 +139,11 @@ impl FileNode {
         match &self.kind {
             NodeKind::File { .. } => 0,
             NodeKind::Directory => {
-                1 + self.children.iter().map(|c| c.directory_count()).sum::<usize>()
+                1 + self
+                    .children
+                    .iter()
+                    .map(|c| c.directory_count())
+                    .sum::<usize>()
             }
         }
     }
@@ -358,7 +360,13 @@ mod tests {
 
     #[test]
     fn test_file_node() {
-        let node = FileNode::file("main.rs", "project/main.rs", Some("rs".into()), 1024, Some(50));
+        let node = FileNode::file(
+            "main.rs",
+            "project/main.rs",
+            Some("rs".into()),
+            1024,
+            Some(50),
+        );
         assert!(node.is_file());
         assert!(!node.is_directory());
         assert_eq!(node.extension(), Some("rs"));
@@ -368,16 +376,34 @@ mod tests {
     #[test]
     fn test_add_child() {
         let mut dir = FileNode::directory("src", "src");
-        dir.add_child(FileNode::file("lib.rs", "src/lib.rs", Some("rs".into()), 512, Some(25)));
+        dir.add_child(FileNode::file(
+            "lib.rs",
+            "src/lib.rs",
+            Some("rs".into()),
+            512,
+            Some(25),
+        ));
         assert_eq!(dir.children.len(), 1);
     }
 
     #[test]
     fn test_sort_children() {
         let mut dir = FileNode::directory("src", "src");
-        dir.add_child(FileNode::file("z.rs", "src/z.rs", Some("rs".into()), 100, Some(5)));
+        dir.add_child(FileNode::file(
+            "z.rs",
+            "src/z.rs",
+            Some("rs".into()),
+            100,
+            Some(5),
+        ));
         dir.add_child(FileNode::directory("utils", "src/utils"));
-        dir.add_child(FileNode::file("a.rs", "src/a.rs", Some("rs".into()), 100, Some(5)));
+        dir.add_child(FileNode::file(
+            "a.rs",
+            "src/a.rs",
+            Some("rs".into()),
+            100,
+            Some(5),
+        ));
 
         dir.sort_children();
 
@@ -392,11 +418,29 @@ mod tests {
     #[test]
     fn test_file_count() {
         let mut root = FileNode::directory("root", "root");
-        root.add_child(FileNode::file("a.rs", "root/a.rs", Some("rs".into()), 100, Some(5)));
+        root.add_child(FileNode::file(
+            "a.rs",
+            "root/a.rs",
+            Some("rs".into()),
+            100,
+            Some(5),
+        ));
 
         let mut sub = FileNode::directory("sub", "root/sub");
-        sub.add_child(FileNode::file("b.rs", "root/sub/b.rs", Some("rs".into()), 100, Some(5)));
-        sub.add_child(FileNode::file("c.rs", "root/sub/c.rs", Some("rs".into()), 100, Some(5)));
+        sub.add_child(FileNode::file(
+            "b.rs",
+            "root/sub/b.rs",
+            Some("rs".into()),
+            100,
+            Some(5),
+        ));
+        sub.add_child(FileNode::file(
+            "c.rs",
+            "root/sub/c.rs",
+            Some("rs".into()),
+            100,
+            Some(5),
+        ));
         root.add_child(sub);
 
         assert_eq!(root.file_count(), 3);

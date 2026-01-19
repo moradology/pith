@@ -1,6 +1,9 @@
 //! Python codemap extraction using tree-sitter.
 
-use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text, with_python_parser};
+use super::{
+    find_child_by_kind, node_text, with_python_parser, Declaration, ExtractOptions, Import,
+    Location, Visibility,
+};
 
 /// Extract imports and declarations from Python source code.
 pub fn extract(
@@ -24,7 +27,7 @@ pub fn extract(
         );
 
         Ok((imports, declarations))
-    })
+    })?
 }
 
 fn extract_from_node(
@@ -70,12 +73,10 @@ fn extract_import(node: tree_sitter::Node, content: &str) -> Option<Import> {
     if node.kind() == "import_from_statement" {
         // from X import Y, Z
         let mut parts = text.splitn(2, " import ");
-        let source = parts.next()?
-            .trim_start_matches("from ")
-            .trim()
-            .to_string();
+        let source = parts.next()?.trim_start_matches("from ").trim().to_string();
 
-        let items: Vec<String> = parts.next()
+        let items: Vec<String> = parts
+            .next()
             .map(|s| {
                 s.split(',')
                     .map(|item| item.split(" as ").next().unwrap_or(item).trim().to_string())
@@ -84,11 +85,17 @@ fn extract_import(node: tree_sitter::Node, content: &str) -> Option<Import> {
             })
             .unwrap_or_default();
 
-        Some(Import { source, items: items.into() })
+        Some(Import {
+            source,
+            items: items.into(),
+        })
     } else {
         // import X
         let source = text.trim_start_matches("import ").trim().to_string();
-        Some(Import { source, items: smallvec::smallvec![] })
+        Some(Import {
+            source,
+            items: smallvec::smallvec![],
+        })
     }
 }
 
@@ -97,11 +104,9 @@ fn extract_function(
     content: &str,
     options: &ExtractOptions,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "identifier").map(|n| node_text(n, content))?;
 
-    let is_async = node.children(&mut node.walk())
-        .any(|c| c.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|c| c.kind() == "async");
 
     // Determine visibility from name convention
     let visibility = if name.starts_with("__") && !name.ends_with("__") {
@@ -131,10 +136,7 @@ fn extract_function(
         signature.push_str(&node_text(ret, content));
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_docstring(node, content)
@@ -157,8 +159,7 @@ fn extract_class(
     content: &str,
     options: &ExtractOptions,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "identifier").map(|n| node_text(n, content))?;
 
     let visibility = if name.starts_with('_') {
         Visibility::Protected
@@ -186,10 +187,7 @@ fn extract_class(
         }
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_docstring(node, content)
@@ -270,7 +268,10 @@ def greet(name: str) -> str:
     """Greet someone."""
     return f"Hello, {name}"
 "#;
-        let opts = ExtractOptions { include_docs: true, ..Default::default() };
+        let opts = ExtractOptions {
+            include_docs: true,
+            ..Default::default()
+        };
         let (_, decls) = extract(code, &opts).unwrap();
         assert_eq!(decls.len(), 1);
 
@@ -333,7 +334,10 @@ def _protected_func():
 def __private_func():
     pass
 "#;
-        let opts = ExtractOptions { include_private: true, ..Default::default() };
+        let opts = ExtractOptions {
+            include_private: true,
+            ..Default::default()
+        };
         let (_, decls) = extract(code, &opts).unwrap();
         assert_eq!(decls.len(), 3);
 
@@ -351,7 +355,11 @@ async def fetch_data(url: str) -> bytes:
         let (_, decls) = extract(code, &ExtractOptions::default()).unwrap();
 
         match &decls[0] {
-            Declaration::Function { is_async, signature, .. } => {
+            Declaration::Function {
+                is_async,
+                signature,
+                ..
+            } => {
                 assert!(*is_async);
                 assert!(signature.contains("async"));
             }

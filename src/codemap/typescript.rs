@@ -2,8 +2,11 @@
 
 use tree_sitter::Parser;
 
+use super::{
+    find_child_by_kind, node_text, with_ts_parser, with_tsx_parser, Declaration, ExtractOptions,
+    Import, Location, Visibility,
+};
 use crate::filter::Language;
-use super::{Declaration, ExtractOptions, Import, Location, Visibility, find_child_by_kind, node_text, with_ts_parser, with_tsx_parser};
 
 /// Extract imports and declarations from TypeScript/TSX source code.
 pub fn extract(
@@ -31,8 +34,8 @@ pub fn extract(
     };
 
     match language {
-        Language::Tsx => with_tsx_parser(extract_fn),
-        _ => with_ts_parser(extract_fn),
+        Language::Tsx => with_tsx_parser(extract_fn)?,
+        _ => with_ts_parser(extract_fn)?,
     }
 }
 
@@ -66,12 +69,12 @@ fn extract_from_node(
                 }
             }
             "interface_declaration" => {
-                if let Some(iface) = extract_interface(child, content, options) {
+                if let Some(iface) = extract_interface(child, content, options, false) {
                     declarations.push(iface);
                 }
             }
             "type_alias_declaration" => {
-                if let Some(alias) = extract_type_alias(child, content) {
+                if let Some(alias) = extract_type_alias(child, content, options, false) {
                     declarations.push(alias);
                 }
             }
@@ -88,10 +91,7 @@ fn extract_import(node: tree_sitter::Node, content: &str) -> Option<Import> {
     let text = node_text(node, content);
 
     // Simple parsing: extract from "module"
-    let source = text
-        .split(&['\'', '"'][..])
-        .nth(1)
-        .map(|s| s.to_string())?;
+    let source = text.split(&['\'', '"'][..]).nth(1).map(|s| s.to_string())?;
 
     // Extract imported items
     let mut items = Vec::new();
@@ -112,7 +112,10 @@ fn extract_import(node: tree_sitter::Node, content: &str) -> Option<Import> {
         items.push("*".to_string());
     }
 
-    Some(Import { source, items: items.into() })
+    Some(Import {
+        source,
+        items: items.into(),
+    })
 }
 
 fn extract_export(
@@ -134,12 +137,12 @@ fn extract_export(
                 }
             }
             "interface_declaration" => {
-                if let Some(iface) = extract_interface(child, content, options) {
+                if let Some(iface) = extract_interface(child, content, options, true) {
                     declarations.push(iface);
                 }
             }
             "type_alias_declaration" => {
-                if let Some(alias) = extract_type_alias(child, content) {
+                if let Some(alias) = extract_type_alias(child, content, options, true) {
                     declarations.push(alias);
                 }
             }
@@ -157,11 +160,9 @@ fn extract_function(
     options: &ExtractOptions,
     is_exported: bool,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "identifier").map(|n| node_text(n, content))?;
 
-    let is_async = node.children(&mut node.walk())
-        .any(|c| c.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|c| c.kind() == "async");
 
     // Build signature
     let mut signature = String::new();
@@ -184,10 +185,7 @@ fn extract_function(
         signature.push_str(&node_text(ret, content));
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_jsdoc(node, content)
@@ -198,7 +196,7 @@ fn extract_function(
     Some(Declaration::Function {
         name,
         signature,
-        visibility: if is_exported { Visibility::Public } else { Visibility::Private },
+        visibility: Visibility::Public,
         location,
         is_async,
         doc,
@@ -209,10 +207,9 @@ fn extract_class(
     node: tree_sitter::Node,
     content: &str,
     options: &ExtractOptions,
-    is_exported: bool,
+    _is_exported: bool,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let mut members = Vec::new();
 
@@ -232,10 +229,7 @@ fn extract_class(
         }
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_jsdoc(node, content)
@@ -246,7 +240,7 @@ fn extract_class(
     Some(Declaration::Class {
         name,
         members,
-        visibility: if is_exported { Visibility::Public } else { Visibility::Private },
+        visibility: Visibility::Public,
         location,
         doc,
     })
@@ -257,11 +251,9 @@ fn extract_method(
     content: &str,
     options: &ExtractOptions,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "property_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "property_identifier").map(|n| node_text(n, content))?;
 
-    let is_async = node.children(&mut node.walk())
-        .any(|c| c.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|c| c.kind() == "async");
 
     let mut signature = String::new();
     if is_async {
@@ -277,10 +269,7 @@ fn extract_method(
         signature.push_str(&node_text(ret, content));
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_jsdoc(node, content)
@@ -288,23 +277,47 @@ fn extract_method(
         None
     };
 
+    let visibility = method_visibility(node, content);
+    if !options.include_private && visibility != Visibility::Public {
+        return None;
+    }
+
     Some(Declaration::Function {
         name,
         signature,
-        visibility: Visibility::Public,
+        visibility,
         location,
         is_async,
         doc,
     })
 }
 
+fn method_visibility(node: tree_sitter::Node, content: &str) -> Visibility {
+    // Look for explicit accessibility modifier.
+    // tree-sitter-typescript uses `accessibility_modifier` containing "public",
+    // "private", or "protected".
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "accessibility_modifier" {
+            let text = node_text(child, content);
+            return match text.trim() {
+                "public" => Visibility::Public,
+                "protected" => Visibility::Protected,
+                "private" => Visibility::Private,
+                _ => Visibility::Public,
+            };
+        }
+    }
+
+    Visibility::Public
+}
+
 fn extract_interface(
     node: tree_sitter::Node,
     content: &str,
     options: &ExtractOptions,
+    _is_exported: bool,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let mut members = Vec::new();
 
@@ -313,15 +326,16 @@ fn extract_interface(
     {
         for child in body.children(&mut body.walk()) {
             if child.kind() == "property_signature" || child.kind() == "method_signature" {
-                members.push(node_text(child, content).trim_end_matches([',', ';']).to_string());
+                members.push(
+                    node_text(child, content)
+                        .trim_end_matches([',', ';'])
+                        .to_string(),
+                );
             }
         }
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_jsdoc(node, content)
@@ -332,14 +346,19 @@ fn extract_interface(
     Some(Declaration::Interface {
         name,
         members: members.into(),
+        visibility: Visibility::Public,
         location,
         doc,
     })
 }
 
-fn extract_type_alias(node: tree_sitter::Node, content: &str) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+fn extract_type_alias(
+    node: tree_sitter::Node,
+    content: &str,
+    _options: &ExtractOptions,
+    _is_exported: bool,
+) -> Option<Declaration> {
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let full_text = node_text(node, content);
     let target = full_text
@@ -348,10 +367,7 @@ fn extract_type_alias(node: tree_sitter::Node, content: &str) -> Option<Declarat
         .map(|s| s.trim().trim_end_matches(';').to_string())
         .unwrap_or_default();
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     Some(Declaration::TypeAlias {
         name,
@@ -372,16 +388,19 @@ fn extract_lexical(
         if child.kind() == "variable_declarator" {
             // Check if it's an arrow function
             if let Some(arrow) = find_child_by_kind(child, "arrow_function") {
-                let name = find_child_by_kind(child, "identifier")
-                    .map(|n| node_text(n, content));
+                let name = find_child_by_kind(child, "identifier").map(|n| node_text(n, content));
 
                 if let Some(name) = name {
-                    let is_async = arrow.children(&mut arrow.walk())
+                    let is_async = arrow
+                        .children(&mut arrow.walk())
                         .any(|c| c.kind() == "async");
 
                     let mut signature = String::new();
                     if is_exported {
                         signature.push_str("export ");
+                    }
+                    if is_async {
+                        signature.push_str("async ");
                     }
                     signature.push_str("const ");
                     signature.push_str(&name);
@@ -391,10 +410,11 @@ fn extract_lexical(
                         signature.push_str(&node_text(type_ann, content));
                     }
 
-                    let location = Location::new(
-                        node.start_position().row + 1,
-                        node.end_position().row + 1,
-                    );
+                    signature.push_str(" = ");
+                    signature.push_str(&node_text(arrow, content));
+
+                    let location =
+                        Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
                     let doc = if options.include_docs {
                         extract_jsdoc(node, content)
@@ -402,10 +422,12 @@ fn extract_lexical(
                         None
                     };
 
+                    // Top-level lexical arrow functions are included by default.
+                    // `include_private` only gates members/modifiers.
                     declarations.push(Declaration::Function {
                         name,
                         signature,
-                        visibility: if is_exported { Visibility::Public } else { Visibility::Private },
+                        visibility: Visibility::Public,
                         location,
                         is_async,
                         doc,
@@ -459,21 +481,51 @@ export function greet(name: string): string {
     #[test]
     fn test_extract_interface() {
         let code = r#"
-export interface Config {
-    name: string;
-    timeout: number;
-}
-"#;
+ export interface Config {
+     name: string;
+     timeout: number;
+ }
+ "#;
         let (_, decls) = extract(code, Language::TypeScript, &ExtractOptions::default()).unwrap();
         assert_eq!(decls.len(), 1);
 
         match &decls[0] {
-            Declaration::Interface { name, members, .. } => {
+            Declaration::Interface {
+                name,
+                members,
+                visibility,
+                ..
+            } => {
                 assert_eq!(name, "Config");
                 assert_eq!(members.len(), 2);
+                assert_eq!(*visibility, Visibility::Public);
             }
             _ => panic!("expected interface"),
         }
+    }
+
+    #[test]
+    fn test_top_level_interface_included_by_default() {
+        let code = r#"
+  interface Internal {
+      x: number;
+  }
+  "#;
+        let (_, decls) = extract(code, Language::TypeScript, &ExtractOptions::default()).unwrap();
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].name(), "Internal");
+        assert_eq!(decls[0].visibility(), Visibility::Public);
+    }
+
+    #[test]
+    fn test_top_level_type_alias_included_by_default() {
+        let code = r#"
+  type Internal = { x: number };
+  "#;
+        let (_, decls) = extract(code, Language::TypeScript, &ExtractOptions::default()).unwrap();
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].name(), "Internal");
+        assert_eq!(decls[0].visibility(), Visibility::Public);
     }
 
     #[test]
@@ -491,12 +543,12 @@ import * as utils from './utils';
     #[test]
     fn test_extract_class() {
         let code = r#"
-export class Handler {
-    async handle(req: Request): Promise<Response> {
-        return new Response();
-    }
-}
-"#;
+ export class Handler {
+     async handle(req: Request): Promise<Response> {
+         return new Response();
+     }
+ }
+ "#;
         let (_, decls) = extract(code, Language::TypeScript, &ExtractOptions::default()).unwrap();
         assert_eq!(decls.len(), 1);
 
@@ -504,6 +556,38 @@ export class Handler {
             Declaration::Class { name, members, .. } => {
                 assert_eq!(name, "Handler");
                 assert_eq!(members.len(), 1);
+            }
+            _ => panic!("expected class"),
+        }
+    }
+
+    #[test]
+    fn test_private_class_method_filtered_by_default() {
+        let code = r#"
+ class C {
+     private secret(): string { return "x"; }
+     public ok(): string { return "y"; }
+ }
+ "#;
+        let (_, decls) = extract(code, Language::TypeScript, &ExtractOptions::default()).unwrap();
+        assert_eq!(decls.len(), 1);
+
+        match &decls[0] {
+            Declaration::Class { members, .. } => {
+                assert_eq!(members.len(), 1);
+                assert_eq!(members[0].name(), "ok");
+            }
+            _ => panic!("expected class"),
+        }
+
+        let opts = ExtractOptions {
+            include_private: true,
+            ..Default::default()
+        };
+        let (_, decls) = extract(code, Language::TypeScript, &opts).unwrap();
+        match &decls[0] {
+            Declaration::Class { members, .. } => {
+                assert_eq!(members.len(), 2);
             }
             _ => panic!("expected class"),
         }

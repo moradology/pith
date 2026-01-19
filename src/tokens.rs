@@ -129,6 +129,33 @@ impl TokenCounter {
         count_tokens_with_encoding(text, self.encoding)
     }
 
+    /// Return token boundary offsets for `text`.
+    ///
+    /// The returned vector contains the start offset (in bytes) for each token,
+    /// plus a final entry equal to `text.len()`.
+    ///
+    /// Returns `None` if the tokenizer is unavailable or the boundaries can't be
+    /// reconstructed.
+    pub fn token_boundaries(&self, text: &str) -> Option<Vec<usize>> {
+        let bpe = get_tokenizer(self.encoding)?;
+
+        let tokens = bpe.encode_ordinary(text);
+        let mut boundaries = Vec::with_capacity(tokens.len() + 1);
+        boundaries.push(0);
+
+        let mut offset = 0usize;
+        for token_bytes in bpe._decode_native_and_split(tokens) {
+            offset += token_bytes.len();
+            boundaries.push(offset);
+        }
+
+        if offset != text.len() {
+            return None;
+        }
+
+        Some(boundaries)
+    }
+
     /// Count tokens for multiple texts.
     pub fn count_many<'a>(&self, texts: impl IntoIterator<Item = &'a str>) -> Vec<usize> {
         texts.into_iter().map(|t| self.count(t)).collect()

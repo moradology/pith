@@ -125,22 +125,14 @@ impl std::fmt::Display for RejectReason {
 /// Extensions that are always rejected (binary, lock files, etc.)
 const BLOCKLISTED_EXTENSIONS: &[&str] = &[
     // Images
-    "png", "jpg", "jpeg", "gif", "webp", "ico", "svg", "bmp", "tiff",
-    // Binary
-    "wasm", "so", "dll", "dylib", "exe", "bin", "o", "a", "lib",
-    // Archives
-    "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz",
-    // Documents
-    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-    // Media
-    "mp3", "mp4", "wav", "avi", "mov", "mkv", "flac", "ogg",
-    // Fonts
-    "ttf", "otf", "woff", "woff2", "eot",
-    // Lock files
-    "lock",
-    // Source maps
-    "map",
-    // Database
+    "png", "jpg", "jpeg", "gif", "webp", "ico", "svg", "bmp", "tiff", // Binary
+    "wasm", "so", "dll", "dylib", "exe", "bin", "o", "a", "lib", // Archives
+    "zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz", // Documents
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", // Media
+    "mp3", "mp4", "wav", "avi", "mov", "mkv", "flac", "ogg", // Fonts
+    "ttf", "otf", "woff", "woff2", "eot",  // Lock files
+    "lock", // Source maps
+    "map",  // Database
     "db", "sqlite", "sqlite3",
 ];
 
@@ -227,9 +219,7 @@ pub fn is_generated(content: &[u8]) -> bool {
         return false; // Can't check non-UTF8
     };
 
-    GENERATED_MARKERS
-        .iter()
-        .any(|marker| text.contains(marker))
+    GENERATED_MARKERS.iter().any(|marker| text.contains(marker))
 }
 
 /// Determine if a file should be processed for codemap extraction.
@@ -457,7 +447,10 @@ mod tests {
     fn test_language_from_str() {
         assert_eq!("rust".parse::<Language>().unwrap(), Language::Rust);
         assert_eq!("rs".parse::<Language>().unwrap(), Language::Rust);
-        assert_eq!("typescript".parse::<Language>().unwrap(), Language::TypeScript);
+        assert_eq!(
+            "typescript".parse::<Language>().unwrap(),
+            Language::TypeScript
+        );
         assert_eq!("ts".parse::<Language>().unwrap(), Language::TypeScript);
         assert!("invalid".parse::<Language>().is_err());
     }

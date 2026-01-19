@@ -3,11 +3,11 @@
 //! Extracts API signatures (functions, structs, types) from source files
 //! without implementation bodies.
 
-mod rust;
-mod typescript;
+mod go;
 mod javascript;
 mod python;
-mod go;
+mod rust;
+mod typescript;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -15,88 +15,117 @@ use std::path::{Path, PathBuf};
 use smallvec::SmallVec;
 use tree_sitter::{Node, Parser};
 
-// Thread-local parser caching to avoid re-initialization overhead
+// Thread-local parser caching to avoid re-initialization overhead.
+//
+// Important: no panics here. Parser initialization can fail (grammar load), and
+// per `specs/errors.md` we keep library code panic-free.
 thread_local! {
-    static RUST_PARSER: RefCell<Parser> = RefCell::new({
-        let mut p = Parser::new();
-        p.set_language(&tree_sitter_rust::LANGUAGE.into())
-            .expect("failed to load tree-sitter-rust grammar");
-        p
-    });
+    static RUST_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
+    static TS_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
+    static TSX_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
+    static PYTHON_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
+    static GO_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
+}
 
-    static TS_PARSER: RefCell<Parser> = RefCell::new({
-        let mut p = Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
-            .expect("failed to load tree-sitter-typescript grammar");
-        p
-    });
+fn init_rust_parser() -> Result<Parser, ()> {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_rust::LANGUAGE.into())
+        .map_err(|_| ())?;
+    Ok(p)
+}
 
-    static TSX_PARSER: RefCell<Parser> = RefCell::new({
-        let mut p = Parser::new();
-        p.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
-            .expect("failed to load tree-sitter-tsx grammar");
-        p
-    });
+fn init_ts_parser() -> Result<Parser, ()> {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into())
+        .map_err(|_| ())?;
+    Ok(p)
+}
 
-    static PYTHON_PARSER: RefCell<Parser> = RefCell::new({
-        let mut p = Parser::new();
-        p.set_language(&tree_sitter_python::LANGUAGE.into())
-            .expect("failed to load tree-sitter-python grammar");
-        p
-    });
+fn init_tsx_parser() -> Result<Parser, ()> {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
+        .map_err(|_| ())?;
+    Ok(p)
+}
 
-    static GO_PARSER: RefCell<Parser> = RefCell::new({
-        let mut p = Parser::new();
-        p.set_language(&tree_sitter_go::LANGUAGE.into())
-            .expect("failed to load tree-sitter-go grammar");
-        p
-    });
+fn init_python_parser() -> Result<Parser, ()> {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_python::LANGUAGE.into())
+        .map_err(|_| ())?;
+    Ok(p)
+}
+
+fn init_go_parser() -> Result<Parser, ()> {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_go::LANGUAGE.into())
+        .map_err(|_| ())?;
+    Ok(p)
+}
+
+fn with_cached_parser<F, R>(
+    cell: &'static std::thread::LocalKey<RefCell<Option<Parser>>>,
+    init: fn() -> Result<Parser, ()>,
+    f: F,
+) -> Result<R, String>
+where
+    F: FnOnce(&mut Parser) -> R,
+{
+    cell.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(init().map_err(|_| "failed to initialize parser".to_string())?);
+        }
+
+        let parser = slot
+            .as_mut()
+            .ok_or_else(|| "failed to initialize parser".to_string())?;
+        Ok(f(parser))
+    })
 }
 
 /// Execute a function with a cached Rust parser.
-pub(crate) fn with_rust_parser<F, R>(f: F) -> R
+pub(crate) fn with_rust_parser<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&mut Parser) -> R,
 {
-    RUST_PARSER.with(|p| f(&mut p.borrow_mut()))
+    with_cached_parser(&RUST_PARSER, init_rust_parser, f)
 }
 
 /// Execute a function with a cached TypeScript parser.
-pub(crate) fn with_ts_parser<F, R>(f: F) -> R
+pub(crate) fn with_ts_parser<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&mut Parser) -> R,
 {
-    TS_PARSER.with(|p| f(&mut p.borrow_mut()))
+    with_cached_parser(&TS_PARSER, init_ts_parser, f)
 }
 
 /// Execute a function with a cached TSX parser.
-pub(crate) fn with_tsx_parser<F, R>(f: F) -> R
+pub(crate) fn with_tsx_parser<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&mut Parser) -> R,
 {
-    TSX_PARSER.with(|p| f(&mut p.borrow_mut()))
+    with_cached_parser(&TSX_PARSER, init_tsx_parser, f)
 }
 
 /// Execute a function with a cached Python parser.
-pub(crate) fn with_python_parser<F, R>(f: F) -> R
+pub(crate) fn with_python_parser<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&mut Parser) -> R,
 {
-    PYTHON_PARSER.with(|p| f(&mut p.borrow_mut()))
+    with_cached_parser(&PYTHON_PARSER, init_python_parser, f)
 }
 
 /// Execute a function with a cached Go parser.
-pub(crate) fn with_go_parser<F, R>(f: F) -> R
+pub(crate) fn with_go_parser<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce(&mut Parser) -> R,
 {
-    GO_PARSER.with(|p| f(&mut p.borrow_mut()))
+    with_cached_parser(&GO_PARSER, init_go_parser, f)
 }
 
 /// Find a child node by kind.
 pub(crate) fn find_child_by_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
-    node.children(&mut node.walk())
-        .find(|c| c.kind() == kind)
+    node.children(&mut node.walk()).find(|c| c.kind() == kind)
 }
 
 /// Extract node text from content.
@@ -107,7 +136,6 @@ pub(crate) fn node_text(node: Node, content: &str) -> String {
 use thiserror::Error;
 
 use crate::filter::Language;
-use crate::tokens::count_tokens;
 
 /// Visibility of a declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -143,11 +171,17 @@ pub struct Location {
 
 impl Location {
     pub fn new(start_line: usize, end_line: usize) -> Self {
-        Self { start_line, end_line }
+        Self {
+            start_line,
+            end_line,
+        }
     }
 
     pub fn single_line(line: usize) -> Self {
-        Self { start_line: line, end_line: line }
+        Self {
+            start_line: line,
+            end_line: line,
+        }
     }
 }
 
@@ -192,6 +226,7 @@ pub enum Declaration {
     Trait {
         name: String,
         methods: SmallVec<[String; 8]>,
+        visibility: Visibility,
         location: Location,
         doc: Option<String>,
     },
@@ -213,6 +248,7 @@ pub enum Declaration {
     Interface {
         name: String,
         members: SmallVec<[String; 8]>,
+        visibility: Visibility,
         location: Location,
         doc: Option<String>,
     },
@@ -247,10 +283,10 @@ impl Declaration {
             Declaration::Function { visibility, .. } => *visibility,
             Declaration::Struct { visibility, .. } => *visibility,
             Declaration::Enum { visibility, .. } => *visibility,
-            Declaration::Trait { .. } => Visibility::Public, // Traits are always public in their context
+            Declaration::Trait { visibility, .. } => *visibility,
             Declaration::TypeAlias { visibility, .. } => *visibility,
             Declaration::Const { visibility, .. } => *visibility,
-            Declaration::Interface { .. } => Visibility::Public,
+            Declaration::Interface { visibility, .. } => *visibility,
             Declaration::Class { visibility, .. } => *visibility,
         }
     }
@@ -295,8 +331,6 @@ pub struct Codemap {
     pub imports: SmallVec<[Import; 8]>,
     /// Extracted declarations.
     pub declarations: SmallVec<[Declaration; 16]>,
-    /// Token count of rendered codemap.
-    pub token_count: usize,
     /// Parse error if extraction failed.
     pub parse_error: Option<String>,
 }
@@ -309,7 +343,6 @@ impl Codemap {
             language,
             imports: SmallVec::new(),
             declarations: SmallVec::new(),
-            token_count: 0,
             parse_error: None,
         }
     }
@@ -321,7 +354,6 @@ impl Codemap {
             language,
             imports: SmallVec::new(),
             declarations: SmallVec::new(),
-            token_count: 0,
             parse_error: Some(error),
         }
     }
@@ -430,98 +462,7 @@ pub fn extract_codemap(
         }
     }
 
-    // Calculate token count from a simple render
-    let rendered = render_codemap_simple(&codemap);
-    codemap.token_count = count_tokens(&rendered);
-
     codemap
-}
-
-/// Simple render for token counting.
-fn render_codemap_simple(codemap: &Codemap) -> String {
-    // Pre-allocate for typical codemap size
-    let mut output = String::with_capacity(1024);
-
-    // Imports
-    for import in &codemap.imports {
-        output.push_str(&import.source);
-        output.push('\n');
-    }
-
-    // Declarations
-    for decl in &codemap.declarations {
-        render_declaration_simple(&mut output, decl);
-    }
-
-    output
-}
-
-fn render_declaration_simple(output: &mut String, decl: &Declaration) {
-    match decl {
-        Declaration::Function { signature, .. } => {
-            output.push_str(signature);
-            output.push('\n');
-        }
-        Declaration::Struct { name, fields, methods, .. } => {
-            output.push_str("struct ");
-            output.push_str(name);
-            output.push_str(" { ");
-            for field in fields {
-                output.push_str(&field.name);
-                output.push_str(": ");
-                output.push_str(&field.ty);
-                output.push_str(", ");
-            }
-            output.push_str("}\n");
-            for method in methods {
-                render_declaration_simple(output, method);
-            }
-        }
-        Declaration::Enum { name, variants, .. } => {
-            output.push_str("enum ");
-            output.push_str(name);
-            output.push_str(" { ");
-            output.push_str(&variants.join(", "));
-            output.push_str(" }\n");
-        }
-        Declaration::Trait { name, methods, .. } => {
-            output.push_str("trait ");
-            output.push_str(name);
-            output.push_str(" { ");
-            output.push_str(&methods.join("; "));
-            output.push_str(" }\n");
-        }
-        Declaration::TypeAlias { name, target, .. } => {
-            output.push_str("type ");
-            output.push_str(name);
-            output.push_str(" = ");
-            output.push_str(target);
-            output.push('\n');
-        }
-        Declaration::Const { name, ty, .. } => {
-            output.push_str("const ");
-            output.push_str(name);
-            output.push_str(": ");
-            output.push_str(ty);
-            output.push('\n');
-        }
-        Declaration::Interface { name, members, .. } => {
-            output.push_str("interface ");
-            output.push_str(name);
-            output.push_str(" { ");
-            output.push_str(&members.join("; "));
-            output.push_str(" }\n");
-        }
-        Declaration::Class { name, members, .. } => {
-            output.push_str("class ");
-            output.push_str(name);
-            output.push_str(" {\n");
-            for member in members {
-                render_declaration_simple(output, member);
-            }
-            output.push_str("}\n");
-        }
-    }
 }
 
 #[cfg(test)]

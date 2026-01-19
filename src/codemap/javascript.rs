@@ -2,8 +2,8 @@
 //!
 //! Uses the TypeScript parser which handles JavaScript as well.
 
-use crate::filter::Language;
 use super::{Declaration, ExtractOptions, Import};
+use crate::filter::Language;
 
 /// Extract imports and declarations from JavaScript/JSX source code.
 ///

@@ -242,9 +242,10 @@ pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<Fil
         source: e,
     })?;
 
-    let name = root
-        .file_name()
-        .map_or_else(|| root.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned());
+    let name = root.file_name().map_or_else(
+        || root.to_string_lossy().into_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    );
 
     if metadata.is_file() {
         let extension = root
@@ -255,11 +256,18 @@ pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<Fil
         // Count lines using streaming (8KB buffer instead of loading entire file)
         let lines = count_lines_streaming(root);
 
-        return Ok(FileNode::file(name, root.to_path_buf(), extension, metadata.len(), lines));
+        return Ok(FileNode::file(
+            name,
+            root.to_path_buf(),
+            extension,
+            metadata.len(),
+            lines,
+        ));
     }
 
     // It's a directory - walk and build tree
-    let mut node_map: std::collections::HashMap<PathBuf, FileNode> = std::collections::HashMap::new();
+    let mut node_map: std::collections::HashMap<PathBuf, FileNode> =
+        std::collections::HashMap::new();
 
     // Create root node
     let root_node = FileNode::directory(&name, root.to_path_buf());
@@ -289,7 +297,13 @@ pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<Fil
             // Count lines using streaming (8KB buffer instead of loading entire file)
             let lines = count_lines_streaming(&entry.path);
 
-            FileNode::file(&entry_name, &entry.path, extension, entry.size.unwrap_or(0), lines)
+            FileNode::file(
+                &entry_name,
+                &entry.path,
+                extension,
+                entry.size.unwrap_or(0),
+                lines,
+            )
         } else {
             FileNode::directory(&entry_name, &entry.path)
         };
@@ -313,10 +327,12 @@ pub fn build_tree_with_options(root: &Path, options: &WalkOptions) -> Result<Fil
     }
 
     // Get the root and sort
-    let mut result = node_map.remove(&root.to_path_buf()).ok_or_else(|| WalkError::Io {
-        path: root.to_path_buf(),
-        source: std::io::Error::other("failed to build tree"),
-    })?;
+    let mut result = node_map
+        .remove(&root.to_path_buf())
+        .ok_or_else(|| WalkError::Io {
+            path: root.to_path_buf(),
+            source: std::io::Error::other("failed to build tree"),
+        })?;
 
     result.sort_children();
     Ok(result)
@@ -348,8 +364,8 @@ mod itertools_lite {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();

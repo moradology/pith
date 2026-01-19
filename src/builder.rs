@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use crate::codemap::{Codemap, ExtractOptions, extract_codemap};
+use crate::codemap::{extract_codemap, Codemap, ExtractOptions};
 use crate::errors::PithError;
-use crate::filter::{Language, FilterResult, should_process, passes_extension_filter};
+use crate::filter::{passes_extension_filter, should_process, FilterResult, Language};
 use crate::tree::{FileNode, RenderOptions};
-use crate::walker::{WalkOptions, build_tree, walk_with_options};
+use crate::walker::{build_tree_with_options, walk_with_options, WalkOptions};
 
 /// Builder for extracting codemaps from a codebase.
 ///
@@ -78,8 +78,8 @@ impl Pith {
     /// Build and return extraction results.
     pub fn build(self) -> Result<PithResult, PithError> {
         // Build tree
-        let tree = build_tree(&self.root)
-            .map_err(PithError::Walk)?;
+        let tree =
+            build_tree_with_options(&self.root, &self.walk_options).map_err(PithError::Walk)?;
 
         // Extract codemaps in parallel
         let extract_options = ExtractOptions {
@@ -114,7 +114,7 @@ impl Pith {
 
     /// Build tree only (no codemaps).
     pub fn tree(self) -> Result<FileNode, PithError> {
-        build_tree(&self.root).map_err(PithError::Walk)
+        build_tree_with_options(&self.root, &self.walk_options).map_err(PithError::Walk)
     }
 }
 
@@ -136,11 +136,6 @@ impl PithResult {
     /// Get codemap for a specific path.
     pub fn codemap_for(&self, path: &Path) -> Option<&Codemap> {
         self.codemaps.iter().find(|c| c.path == path)
-    }
-
-    /// Total token count across all codemaps.
-    pub fn total_tokens(&self) -> usize {
-        self.codemaps.iter().map(|c| c.token_count).sum()
     }
 
     /// Build render options with codemap markers.
@@ -191,12 +186,12 @@ fn extract_codemaps_parallel(
             let metadata = std::fs::metadata(&path).ok()?;
             let file_size = metadata.len();
 
+            // Open file once so we can reuse the handle
+            let mut file = std::fs::File::open(&path).ok()?;
+
             // Read first 1KB for heuristics check
             let mut first_kb = [0u8; 1024];
-            let n = {
-                let mut file = std::fs::File::open(&path).ok()?;
-                file.read(&mut first_kb).ok()?
-            };
+            let n = file.read(&mut first_kb).ok()?;
 
             // Apply content heuristics on first 1KB only
             match should_process(&path, Some(&first_kb[..n])) {
@@ -209,15 +204,16 @@ fn extract_codemaps_parallel(
                 // Small file: we already have it in the buffer
                 String::from_utf8(first_kb[..n].to_vec()).ok()?
             } else if file_size > MMAP_THRESHOLD {
-                // Large file: use memory mapping to avoid heap allocation
+                // Large file: use memory mapping to avoid heap allocation.
+                // Avoid immediately allocating a full String; parse from &str.
                 use memmap2::Mmap;
-                let file = std::fs::File::open(&path).ok()?;
                 let mmap = unsafe { Mmap::map(&file).ok()? };
-                std::str::from_utf8(&mmap).ok()?.to_string()
+                let text = std::str::from_utf8(&mmap).ok()?;
+                return Some(extract_codemap(&path, text, lang, extract_options));
             } else {
-                // Medium file: pre-allocate capacity to avoid reallocs
+                // Medium file: reuse the already-read prefix and continue reading.
                 let mut content = String::with_capacity(file_size as usize);
-                let mut file = std::fs::File::open(&path).ok()?;
+                content.push_str(std::str::from_utf8(&first_kb[..n]).ok()?);
                 file.read_to_string(&mut content).ok()?;
                 content
             };
@@ -251,12 +247,7 @@ pub fn extract_from_path(
     root: impl AsRef<Path>,
     options: &ExtractOptions,
 ) -> Result<Vec<Codemap>, PithError> {
-    extract_codemaps_parallel(
-        root.as_ref(),
-        &WalkOptions::default(),
-        options,
-        None,
-    )
+    extract_codemaps_parallel(root.as_ref(), &WalkOptions::default(), options, None)
 }
 
 /// Extract codemaps for specific languages.
@@ -275,14 +266,14 @@ pub fn extract_languages(
 
 /// Build a file tree from a path.
 pub fn tree_from_path(root: impl AsRef<Path>) -> Result<FileNode, PithError> {
-    build_tree(root.as_ref()).map_err(PithError::Walk)
+    build_tree_with_options(root.as_ref(), &WalkOptions::default()).map_err(PithError::Walk)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_project() -> TempDir {
         let dir = TempDir::new().unwrap();
@@ -295,7 +286,8 @@ pub fn main() {
     println!("Hello");
 }
 "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         fs::write(
             dir.path().join("src/lib.rs"),
@@ -308,7 +300,8 @@ pub fn process(config: &Config) -> String {
     config.name.clone()
 }
 "#,
-        ).unwrap();
+        )
+        .unwrap();
 
         dir
     }
@@ -330,9 +323,7 @@ pub fn process(config: &Config) -> String {
     fn test_extract_only() {
         let dir = create_test_project();
 
-        let codemaps = Pith::new(dir.path())
-            .extract()
-            .unwrap();
+        let codemaps = Pith::new(dir.path()).extract().unwrap();
 
         assert!(!codemaps.is_empty());
     }
@@ -341,12 +332,48 @@ pub fn process(config: &Config) -> String {
     fn test_tree_only() {
         let dir = create_test_project();
 
-        let tree = Pith::new(dir.path())
-            .tree()
-            .unwrap();
+        let tree = Pith::new(dir.path()).tree().unwrap();
 
         assert!(tree.is_directory());
         assert!(tree.file_count() >= 2);
+    }
+
+    #[test]
+    fn test_tree_include_hidden() {
+        let dir = TempDir::new().unwrap();
+
+        fs::write(dir.path().join("visible.rs"), "fn visible() {}\n").unwrap();
+        fs::write(dir.path().join(".hidden.rs"), "fn hidden() {}\n").unwrap();
+
+        let tree = Pith::new(dir.path()).tree().unwrap();
+        let rendered =
+            crate::tree::render_tree(&tree, &crate::tree::RenderOptions::with_metadata());
+        assert!(rendered.contains("visible.rs"));
+        assert!(!rendered.contains(".hidden.rs"));
+
+        let tree = Pith::new(dir.path()).include_hidden(true).tree().unwrap();
+        let rendered =
+            crate::tree::render_tree(&tree, &crate::tree::RenderOptions::with_metadata());
+        assert!(rendered.contains(".hidden.rs"));
+    }
+
+    #[test]
+    fn test_tree_max_depth() {
+        let dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        fs::write(dir.path().join("a/b/c/deep.rs"), "").unwrap();
+        fs::write(dir.path().join("a/shallow.rs"), "").unwrap();
+
+        // Depth semantics come from `ignore::WalkBuilder`: root is depth 0.
+        // So `max_depth=2` includes files one directory below root.
+        let tree = Pith::new(dir.path()).max_depth(2).tree().unwrap();
+        let rendered =
+            crate::tree::render_tree(&tree, &crate::tree::RenderOptions::with_metadata());
+
+        assert!(rendered.contains("a/"));
+        assert!(rendered.contains("shallow.rs"));
+        assert!(!rendered.contains("deep.rs"));
     }
 
     #[test]
@@ -367,11 +394,8 @@ pub fn process(config: &Config) -> String {
         fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
         fs::write(dir.path().join("index.ts"), "export function foo() {}").unwrap();
 
-        let rust_only = extract_languages(
-            dir.path(),
-            &[Language::Rust],
-            &ExtractOptions::default(),
-        ).unwrap();
+        let rust_only =
+            extract_languages(dir.path(), &[Language::Rust], &ExtractOptions::default()).unwrap();
 
         assert_eq!(rust_only.len(), 1);
         assert!(rust_only[0].path.ends_with("main.rs"));

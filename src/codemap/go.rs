@@ -1,6 +1,9 @@
 //! Go codemap extraction using tree-sitter.
 
-use super::{Declaration, ExtractOptions, Field, Import, Location, Visibility, find_child_by_kind, node_text, with_go_parser};
+use super::{
+    find_child_by_kind, node_text, with_go_parser, Declaration, ExtractOptions, Field, Import,
+    Location, Visibility,
+};
 
 /// Extract imports and declarations from Go source code.
 pub fn extract(
@@ -24,7 +27,7 @@ pub fn extract(
         );
 
         Ok((imports, declarations))
-    })
+    })?
 }
 
 fn extract_from_node(
@@ -85,11 +88,10 @@ fn extract_imports(node: tree_sitter::Node, content: &str, imports: &mut Vec<Imp
 }
 
 fn extract_import_spec(node: tree_sitter::Node, content: &str) -> Option<Import> {
-    let path = find_child_by_kind(node, "interpreted_string_literal")
-        .map(|n| {
-            let text = node_text(n, content);
-            text.trim_matches('"').to_string()
-        })?;
+    let path = find_child_by_kind(node, "interpreted_string_literal").map(|n| {
+        let text = node_text(n, content);
+        text.trim_matches('"').to_string()
+    })?;
 
     Some(Import {
         source: path,
@@ -102,8 +104,7 @@ fn extract_function(
     content: &str,
     options: &ExtractOptions,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "identifier").map(|n| node_text(n, content))?;
 
     let visibility = go_visibility(&name);
 
@@ -123,10 +124,7 @@ fn extract_function(
         signature.push_str(&node_text(result, content));
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_comment(node, content)
@@ -149,8 +147,7 @@ fn extract_method(
     content: &str,
     options: &ExtractOptions,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "field_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "field_identifier").map(|n| node_text(n, content))?;
 
     let visibility = go_visibility(&name);
 
@@ -167,7 +164,8 @@ fn extract_method(
     signature.push_str(&name);
 
     // Find the second parameter list (actual parameters)
-    let param_lists: Vec<_> = node.children(&mut node.walk())
+    let param_lists: Vec<_> = node
+        .children(&mut node.walk())
         .filter(|c| c.kind() == "parameter_list")
         .collect();
 
@@ -181,10 +179,7 @@ fn extract_method(
         signature.push_str(&node_text(result, content));
     }
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     let doc = if options.include_docs {
         extract_comment(node, content)
@@ -224,8 +219,7 @@ fn extract_type_spec(
     content: &str,
     options: &ExtractOptions,
 ) -> Option<Declaration> {
-    let name = find_child_by_kind(node, "type_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "type_identifier").map(|n| node_text(n, content))?;
 
     let visibility = go_visibility(&name);
 
@@ -243,10 +237,7 @@ fn extract_type_spec(
             }
         }
 
-        let location = Location::new(
-            node.start_position().row + 1,
-            node.end_position().row + 1,
-        );
+        let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
         let doc = if options.include_docs {
             extract_comment(node, content)
@@ -274,10 +265,7 @@ fn extract_type_spec(
             }
         }
 
-        let location = Location::new(
-            node.start_position().row + 1,
-            node.end_position().row + 1,
-        );
+        let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
         let doc = if options.include_docs {
             extract_comment(node, content)
@@ -288,6 +276,7 @@ fn extract_type_spec(
         return Some(Declaration::Interface {
             name,
             members: members.into(),
+            visibility,
             location,
             doc,
         });
@@ -300,10 +289,7 @@ fn extract_type_spec(
         .map(|(_, s)| s.trim().to_string())
         .unwrap_or_default();
 
-    let location = Location::new(
-        node.start_position().row + 1,
-        node.end_position().row + 1,
-    );
+    let location = Location::new(node.start_position().row + 1, node.end_position().row + 1);
 
     Some(Declaration::TypeAlias {
         name,
@@ -314,18 +300,24 @@ fn extract_type_spec(
 }
 
 fn extract_struct_field(node: tree_sitter::Node, content: &str) -> Option<Field> {
-    let name = find_child_by_kind(node, "field_identifier")
-        .map(|n| node_text(n, content))?;
+    let name = find_child_by_kind(node, "field_identifier").map(|n| node_text(n, content))?;
 
     let visibility = go_visibility(&name);
 
     // Get type - could be various type nodes
-    let ty = node.children(&mut node.walk())
-        .find(|c| c.kind().contains("type") || c.kind() == "qualified_type" || c.kind() == "pointer_type")
+    let ty = node
+        .children(&mut node.walk())
+        .find(|c| {
+            c.kind().contains("type") || c.kind() == "qualified_type" || c.kind() == "pointer_type"
+        })
         .map(|n| node_text(n, content))
         .unwrap_or_default();
 
-    Some(Field { name, ty, visibility })
+    Some(Field {
+        name,
+        ty,
+        visibility,
+    })
 }
 
 fn extract_const_var(
@@ -348,10 +340,8 @@ fn extract_const_var(
                     .map(|n| node_text(n, content))
                     .unwrap_or_default();
 
-                let location = Location::new(
-                    child.start_position().row + 1,
-                    child.end_position().row + 1,
-                );
+                let location =
+                    Location::new(child.start_position().row + 1, child.end_position().row + 1);
 
                 declarations.push(Declaration::Const {
                     name,
@@ -410,12 +400,20 @@ func Process(input string) (string, error) {
     return input, nil
 }
 "#;
-        let opts = ExtractOptions { include_docs: true, ..Default::default() };
+        let opts = ExtractOptions {
+            include_docs: true,
+            ..Default::default()
+        };
         let (_, decls) = extract(code, &opts).unwrap();
         assert_eq!(decls.len(), 1);
 
         match &decls[0] {
-            Declaration::Function { name, visibility, doc, .. } => {
+            Declaration::Function {
+                name,
+                visibility,
+                doc,
+                ..
+            } => {
                 assert_eq!(name, "Process");
                 assert_eq!(*visibility, Visibility::Public);
                 assert!(doc.is_some());
@@ -460,9 +458,15 @@ type Handler interface {
         assert_eq!(decls.len(), 1);
 
         match &decls[0] {
-            Declaration::Interface { name, members, .. } => {
+            Declaration::Interface {
+                name,
+                members,
+                visibility,
+                ..
+            } => {
                 assert_eq!(name, "Handler");
                 assert_eq!(members.len(), 2);
+                assert_eq!(*visibility, Visibility::Public);
             }
             _ => panic!("expected interface"),
         }
@@ -492,7 +496,10 @@ package main
 func PublicFunc() {}
 func privateFunc() {}
 "#;
-        let opts = ExtractOptions { include_private: true, ..Default::default() };
+        let opts = ExtractOptions {
+            include_private: true,
+            ..Default::default()
+        };
         let (_, decls) = extract(code, &opts).unwrap();
         assert_eq!(decls.len(), 2);
 
@@ -513,7 +520,9 @@ func (h *Handler) Handle(req Request) Response {
         assert_eq!(decls.len(), 1);
 
         match &decls[0] {
-            Declaration::Function { name, signature, .. } => {
+            Declaration::Function {
+                name, signature, ..
+            } => {
                 assert_eq!(name, "Handle");
                 assert!(signature.contains("*Handler"));
             }

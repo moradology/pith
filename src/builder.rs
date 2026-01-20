@@ -154,6 +154,9 @@ fn extract_codemaps_parallel(
     extract_options: &ExtractOptions,
     language_filter: Option<&[Language]>,
 ) -> Result<Vec<Codemap>, PithError> {
+    // Threshold for memory-mapping large files (5MB)
+    const MMAP_THRESHOLD: u64 = 5_000_000;
+
     // Collect files that pass filtering
     let files: Vec<(PathBuf, Language)> = walk_with_options(root, walk_options)
         .filter_map(|entry| entry.ok())
@@ -172,9 +175,6 @@ fn extract_codemaps_parallel(
             Some((entry.path, lang))
         })
         .collect();
-
-    // Threshold for memory-mapping large files (5MB)
-    const MMAP_THRESHOLD: u64 = 5_000_000;
 
     // Extract codemaps in parallel
     let codemaps: Vec<Codemap> = files
@@ -200,7 +200,7 @@ fn extract_codemaps_parallel(
             }
 
             // Read file content with size-based optimization
-            let content = if file_size as usize <= n {
+            let content = if usize::try_from(file_size).ok().is_some_and(|sz| sz <= n) {
                 // Small file: we already have it in the buffer
                 String::from_utf8(first_kb[..n].to_vec()).ok()?
             } else if file_size > MMAP_THRESHOLD {
@@ -212,7 +212,7 @@ fn extract_codemaps_parallel(
                 return Some(extract_codemap(&path, text, lang, extract_options));
             } else {
                 // Medium file: reuse the already-read prefix and continue reading.
-                let mut content = String::with_capacity(file_size as usize);
+                let mut content = String::new();
                 content.push_str(std::str::from_utf8(&first_kb[..n]).ok()?);
                 file.read_to_string(&mut content).ok()?;
                 content

@@ -20,11 +20,11 @@ use tree_sitter::{Node, Parser};
 // Important: no panics here. Parser initialization can fail (grammar load), and
 // per `specs/errors.md` we keep library code panic-free.
 thread_local! {
-    static RUST_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
-    static TS_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
-    static TSX_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
-    static PYTHON_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
-    static GO_PARSER: RefCell<Option<Parser>> = RefCell::new(None);
+    static RUST_PARSER: RefCell<Option<Parser>> = const { RefCell::new(None) };
+    static TS_PARSER: RefCell<Option<Parser>> = const { RefCell::new(None) };
+    static TSX_PARSER: RefCell<Option<Parser>> = const { RefCell::new(None) };
+    static PYTHON_PARSER: RefCell<Option<Parser>> = const { RefCell::new(None) };
+    static GO_PARSER: RefCell<Option<Parser>> = const { RefCell::new(None) };
 }
 
 fn init_rust_parser() -> Result<Parser, ()> {
@@ -73,7 +73,7 @@ where
     cell.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
-            *slot = Some(init().map_err(|_| "failed to initialize parser".to_string())?);
+            *slot = Some(init().map_err(|()| "failed to initialize parser".to_string())?);
         }
 
         let parser = slot

@@ -164,7 +164,7 @@ pub struct RenderOptions<'a> {
     pub has_codemap: HashSet<&'a PathBuf>,
 }
 
-impl<'a> RenderOptions<'a> {
+impl RenderOptions<'_> {
     /// Create options with all metadata enabled.
     pub fn with_metadata() -> Self {
         Self {
@@ -332,7 +332,8 @@ pub fn format_number(n: usize) -> String {
         if digits > 0 && digits % 3 == 0 {
             result.push(',');
         }
-        result.push((b'0' + (n % 10) as u8) as char);
+        let digit = u8::try_from(n % 10).unwrap_or(0);
+        result.push((b'0' + digit) as char);
         n /= 10;
         digits += 1;
     }

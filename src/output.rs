@@ -856,13 +856,10 @@ fn format_output_json(
         };
 
         let tree_tokens = if options.include_tree {
-            json_tree
-                .as_ref()
-                .map(|t| {
-                    let s = serde_json::to_string_pretty(t).unwrap_or_default();
-                    counter.count(&s)
-                })
-                .unwrap_or(0)
+            json_tree.as_ref().map_or(0, |t| {
+                let s = serde_json::to_string_pretty(t).unwrap_or_default();
+                counter.count(&s)
+            })
         } else {
             0
         };

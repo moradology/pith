@@ -1,0 +1,169 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test
+
+  ensure-version:
+    name: ensure version matches tag
+    runs-on: ubuntu-latest
+    needs: verify
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag must be vMAJOR.MINOR.PATCH, got: $tag" >&2
+            exit 1
+          fi
+
+          cargo_version=$(cargo metadata --no-deps --format-version 1 | sed -n 's/.*"name":"pith".*"version":"\([0-9][0-9.]*\)".*/\1/p' | head -n 1)
+          if [[ -z "$cargo_version" || "$cargo_version" == "null" ]]; then
+            echo "failed to read Cargo.toml version" >&2
+            exit 1
+          fi
+
+          expected="${tag#v}"
+          if [[ "$cargo_version" != "$expected" ]]; then
+            echo "tag/version mismatch: tag=$expected Cargo.toml=$cargo_version" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build artifacts
+    needs: ensure-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked --target "${{ matrix.target }}"
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.ensure-version.outputs.tag }}"
+          target="${{ matrix.target }}"
+
+          bin="pith"
+          src="target/${target}/release/${bin}"
+          if [[ ! -f "$src" ]]; then
+            echo "missing binary: $src" >&2
+            exit 1
+          fi
+
+          name="${bin}-${tag}-${target}"
+          mkdir -p dist
+          mkdir -p "dist/${name}"
+          cp "$src" "dist/${name}/${bin}"
+
+          (cd dist && tar -czf "${name}.tar.gz" "${name}")
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = "${{ needs.ensure-version.outputs.tag }}"
+          $target = "${{ matrix.target }}"
+          $bin = "pith.exe"
+          $src = "target/$target/release/$bin"
+          if (!(Test-Path $src)) { throw "missing binary: $src" }
+
+          $name = "pith-$tag-$target"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item $src "dist/$name/$bin"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pith-${{ needs.ensure-version.outputs.tag }}-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    name: publish crates.io
+    runs-on: ubuntu-latest
+    needs: ensure-version
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - ensure-version
+      - build
+      - publish
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.ensure-version.outputs.tag }}
+          name: ${{ needs.ensure-version.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            dist/**/*.tar.gz
+            dist/**/*.zip
+
+      - name: Release summary
+        shell: bash
+        run: |
+          echo "Released ${{ needs.ensure-version.outputs.tag }} (pith ${{ needs.ensure-version.outputs.version }})"

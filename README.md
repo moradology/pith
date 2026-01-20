@@ -157,7 +157,7 @@ This is a young project. API may change between versions.
 
 ## Contributing
 
-Issues and pull requests welcome. Please run `cargo test` before submitting.
+Issues and pull requests welcome. Please run `./scripts/ci.sh` (fmt + clippy + test) before submitting.
 
 ## License
 
